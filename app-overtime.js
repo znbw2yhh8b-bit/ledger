@@ -31,24 +31,33 @@
     const fx = [{ c: otAvg(l6), h: 'L6M avg', sum: 1, cls: 'tm-u ot-sum' }, { c: otSum(ytd), h: 'YTD1', sub: 'Jan' + th.slice(2, 4) + '–', sum: 1, cls: 'tm-u' }, { c: otSum(ytd2), h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2), sum: 1, cls: 'tm-u' }, { c: otSum(ltm), h: 'LTM', sum: 1, cls: 'tm-u' }];
     return cs.concat(fx.filter((q) => q.c));
   }
-  // ---- Forecast: today, then 5 year-ends ----
+  // ---- Forecast: YTD1 and YTD2 (actuals, the same cycles and figures as the Actuals tab), then 5 fiscal year-ends ----
+  // an actual YTD column: the Actuals-tab sums (money in, costs, left over) plus where the money went by account, from the same statements (M.colFromStatement)
+  function fcYtd(ks) { if (!ks.length) return null; const a = otSum(ks.map(tmFromStmt)); if (!a) return null; const to = {};
+    ks.forEach((k) => { const r = M.colFromStatement(stmtOf(k), k, 'A', D.txs); Object.entries(r.assets).forEach(([x, v]) => { if (x !== 'total') to[x] = (to[x] || 0) + (+v || 0); }); });
+    a.to = to; a.to.total = Object.keys(to).filter((x) => x !== 'total').reduce((t, x) => t + to[x], 0); return a; }
   const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, y, i, cls: 'tm-plan' })); const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th);
-    const k1 = otYtd1(closed, th), k2 = otYtd2(closed, th); const a1 = otSum(k1.map(tmFromStmt)), a2 = otSum(k2.map(tmFromStmt));
+    const k1 = otYtd1(closed, th), k2 = otYtd2(closed, th); const a1 = fcYtd(k1), a2 = fcYtd(k2);
     if (a2) cs.unshift({ h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2) + ', ' + k2.length + ' of 12', a: a2, cls: 'tm-u' });
     if (a1) cs.unshift({ h: 'YTD1', sub: 'Jan' + th.slice(2, 4) + ', ' + k1.length + ' of 12', a: a1, cls: 'tm-u' }); return cs; };
-  // the actual figure for a forecast row, for the YTD2 column (only money in, costs and left over have one)
-  const fcAct = (q, l, k) => { const a = q.a; if (l === 'Money in' && k === 'tot') return a.in.total; if (l === 'Net pay') return a.in.spendable; if (l === 'Bonus') return a.in.bonus;
-    if (l === 'Costs' && k === 'tot') return a.cost.total; if (l === 'Left over') return a.left; const b = C.BUCKET6.find(([, n]) => n === l); if (b && k === 'ot-bk') return a.cost[b[0]]; return null; };
   function fcTable(f) {
-    const cols = fcCols(f); const fy = cols.filter((q) => q.y); const names = []; f.years.forEach((y) => Object.keys(y.items).forEach((n) => { if (!names.includes(n)) names.push(n); }));
-    const AC = [['cash', 'Current accounts'], ['la', 'Livret A'], ['ld', 'LDDS'], ['pea', 'PEA'], ['other', 'Other investments'], ['pee', 'PEE'], ['pc', 'PERCOL']].concat(S.cfg.accounts.filter((a) => M.extraKeys([a]).length).map((a) => [a.key, a.name])).filter(([k]) => f.years.some((y) => Math.abs(y.assets[k] || 0) >= 0.5));
-    const R = [['h', 'Money in']].concat(names.map((n) => ['', n, (q) => q.y.items[n] || 0]), [['tot', 'Money in', (q) => q.y.in.total], ['h', 'Costs']],
-      C.BUCKET6.map(([k, n]) => ['ot-bk', n, (q) => q.y.cost[k]]), [['tot', 'Costs', (q) => q.y.cost.total], ['tot', 'Left over', (q) => q.y.left], ['h', 'To assets']],
-      AC.map(([k, n]) => ['', n, (q) => q.y.assets[k]]), [['tot', 'To assets', (q) => q.y.assets.total], ['h', 'Wealth'], ['', 'Market gains', (q) => q.y.gain.total],
+    const cols = fcCols(f); const names = []; f.years.forEach((y) => Object.keys(y.items).forEach((n) => { if (!names.includes(n)) names.push(n); }));
+    // actual money in on the forecast's lines: net pay and bonus as on Actuals; money paid straight into an account (participation...) on the first line that goes straight to one, else on its own row
+    const inc = (fcAssume().inc || []).filter((l) => l.on !== false); const nm = (l) => (l.name || '').trim() || 'Income';
+    const payN = (inc.find((l) => l.id === 'pay') ? nm(inc.find((l) => l.id === 'pay')) : 'Net pay'), bonN = (inc.find((l) => l.id === 'bonus') ? nm(inc.find((l) => l.id === 'bonus')) : 'Bonus');
+    const dl = inc.find((l) => l.acct && l.acct !== 'cash'); let dirN = dl ? nm(dl) : 'Other'; const anyDir = cols.some((q) => q.a && Math.abs(q.a.in.direct) >= 0.5);
+    [payN, bonN].forEach((n) => { if (cols.some((q) => q.a) && !names.includes(n)) names.push(n); }); if (anyDir && !names.includes(dirN)) names.push(dirN);
+    const actItem = (a, n) => (n === payN ? a.in.spendable : n === bonN ? a.in.bonus : n === dirN ? a.in.direct : 0);
+    const AC = [['cash', 'Current accounts'], ['la', 'Livret A'], ['ld', 'LDDS'], ['pea', 'PEA'], ['other', 'Other investments'], ['pee', 'PEE'], ['pc', 'PERCOL']].concat(S.cfg.accounts.filter((a) => M.extraKeys([a]).length).map((a) => [a.key, a.name]))
+      .filter(([k]) => f.years.some((y) => Math.abs(y.assets[k] || 0) >= 0.5) || cols.some((q) => q.a && Math.abs(q.a.to[k] || 0) >= 0.5));
+    // each row: [class, label, forecast value, actual value (YTD columns; none = blank)]
+    const R = [['h', 'Money in']].concat(names.map((n) => ['', n, (q) => q.y.items[n] || 0, (a) => actItem(a, n)]), [['tot', 'Money in', (q) => q.y.in.total, (a) => a.in.total], ['h', 'Costs']],
+      C.BUCKET6.map(([k, n]) => ['ot-bk', n, (q) => q.y.cost[k], (a) => a.cost[k]]), [['tot', 'Costs', (q) => q.y.cost.total, (a) => a.cost.total], ['tot', 'Left over', (q) => q.y.left, (a) => a.left], ['h', 'To assets']],
+      AC.map(([k, n]) => ['', n, (q) => q.y.assets[k], (a) => a.to[k] || 0]), [['tot', 'To assets', (q) => q.y.assets.total, (a) => a.to.total], ['h', 'Wealth'], ['', 'Market gains', (q) => q.y.gain.total],
       ['tot', 'Total wealth', (q) => q.y.bal.total], ['', "Total wealth, today's money", (q) => f.real[q.i]], ['h', 'Simulated markets (PEA)'], ['', 'Wealth low (P10)', (q) => f.low[q.i]], ['', 'Wealth median (P50)', (q) => f.mid[q.i]], ['', 'Wealth high (P90)', (q) => f.high[q.i]], ['h', 'Stress test'], ['', 'Wealth, 2008 replay', (q) => f.stress[q.i]]]);
     const head = `<tr><th scope="col" class="tm-l">EUR</th>${cols.map((q) => `<th scope="col" class="num ${q.cls}">${esc(q.h)}${q.sub ? `<small>${esc(q.sub)}</small>` : ''}</th>`).join('')}</tr>`;
-    const body = R.map(([k, l, get]) => (k === 'h' ? `<tr class="tm-g"><th scope="rowgroup" class="tm-l">${l}</th><td colspan="${cols.length}"></td></tr>`
-      : `<tr class="${k}"><th scope="row" class="tm-l">${esc(l)}</th>${cols.map((q) => `<td class="num ${q.cls}">${tmNum(q.a ? fcAct(q, l, k) : get(q), k === 'tot')}</td>`).join('')}</tr>`)).join('');
+    const body = R.map(([k, l, get, act]) => (k === 'h' ? `<tr class="tm-g"><th scope="rowgroup" class="tm-l">${l}</th><td colspan="${cols.length}"></td></tr>`
+      : `<tr class="${k}"><th scope="row" class="tm-l">${esc(l)}</th>${cols.map((q) => `<td class="num ${q.cls}">${tmNum(q.a ? (act ? act(q.a) : null) : get(q), k === 'tot')}</td>`).join('')}</tr>`)).join('');
     return `<div class="tm-w ot-w"><table class="tm-t ot-t"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
   // ---- charts: plain SVG, direct labels ----
