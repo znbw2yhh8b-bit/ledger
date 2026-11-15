@@ -1,0 +1,11 @@
+date,account,amount,description,currency,balance,category,id
+2026-10-23,sg,4474.00,VIR RECU ACME CORP SALAIRE,EUR,,,
+2026-10-25,sg,-1300.00,PRLV SEPA ROOFTOP HOMES LOYER,EUR,,,
+2026-10-28,sg,-200.00,VIR VERS REVOLUT,EUR,,,
+2026-10-28,rev,200.00,Top-up from SG,EUR,,,
+2026-11-03,rev,-42.80,CORNER GROCER,EUR,,Groceries,
+2026-11-05,tr,-500.00,Savings plan PEA,EUR,,,
+2026-11-05,pea,500.00,Savings plan MSCI World ETF,EUR,,,
+2026-11-10,sg,-35.00,TAPTAP SEND,EUR,,,
+2026-11-22,sg,-18.40,CB BISTRO LUNA,EUR,2974.40,,
+2026-11-22,rev,0,Closing balance,EUR,157.20,,
