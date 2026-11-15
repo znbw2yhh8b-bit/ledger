@@ -63,29 +63,12 @@
       cols.push({ key: 'y' + y.y, h: y.code, kind: 'F', cls: 'tm-plan', b, paid: y.assets, gain: y.gain, lo: f.low[i], hi: f.high[i], real: f.real[i] }); });
     return cols;
   }
-  // one account between two cycle ends, for the Reconcile detail: its balance at each end and where it came from, and its own statement lines between the two dates
-  function wAcctSrc(a, end, k) { const pts = (S.snapshots && S.snapshots.points) || {}; const R = C.monthRange(k, S.cfg.cutoff); const d = Object.keys(pts).filter((x) => x <= R.to && x > R.from).sort().pop();
-    if (d && pts[d][a.key] != null) return { v: +pts[d][a.key], how: 'check-in ' + fmtDate(d) + (d !== end ? ' (not the cycle end)' : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') };
-    const st = Object.values(S.stmts || {}).filter((x) => x.closing != null && wStKey(x) === a.key && x.from <= end && x.to >= end).sort((p, q) => q.to.localeCompare(p.to))[0];
-    if (st) return { v: C.r2(st.closing - C.sum((st.tx || []).filter((t) => t.date > end), (t) => +t.amt || 0)), how: 'statement to ' + fmtDate(st.to) + ', less lines after ' + fmtDate(end) };
-    const v = wAcctAt(a, end, k); return v == null ? { v: null, how: 'no statement covers ' + fmtDate(end) } : { v, how: 'automatic or typed past balance' }; }
-  function wAcctLines(a, from, to) { const m = new Map(); Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key).forEach((x) => (x.tx || []).forEach((t) => { if (t.date > from && t.date <= to) m.set(t.id || t.date + t.amt + t.desc, t); })); return [...m.values()]; }
-  function reconDetail(c, k, prevKey) {
-    if (!prevKey) return ''; const e0 = C.monthRange(prevKey, S.cfg.cutoff).to, e1 = c.kind === 'C' ? D.today : C.monthRange(c.key, S.cfg.cutoff).to;
-    const accs = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && wGroupOf(a) === k);
-    const rows = accs.map((a) => { const s0 = wAcctSrc(a, e0, prevKey), s1 = c.kind === 'C' ? { v: +a.balance || 0, how: 'balance today' + (a.asOf ? ' (as of ' + fmtDate(a.asOf) + ')' : '') } : wAcctSrc(a, e1, c.key); const ls = wAcctLines(a, e0, e1); const mv = C.sum(ls, (t) => +t.amt || 0);
-      const fx = C.sum(ls.filter((t) => /Exchange rate effect/.test(t.desc || '')), (t) => +t.amt || 0); const exp = s0.v == null ? null : s0.v + mv; const d = exp == null || s1.v == null ? null : s1.v - exp;
-      return `<tr><th scope="row" class="tm-l">${esc(a.name.replace(/\s*••\d+/, ''))}${isUsd(a) ? ' <span class="muted">USD</span>' : ''}</th><td class="num">${tmNum(s0.v)}</td><td class="num">${tmNum(mv)}${Math.abs(fx) >= 0.5 ? `<small>FX ${tmNum(fx)}</small>` : ''}</td><td class="num">${tmNum(s1.v)}</td><td class="num">${tmNum(d, true)}</td></tr><tr class="muted sm"><td colspan="5">${esc(fmtDate(e0))}: ${esc(s0.how)} · ${esc(fmtDate(e1))}: ${esc(s1.how)} · ${ls.length} lines</td></tr>`; }).join('');
-    return `<details class="w-rd"><summary class="sm">By account, ${esc(fmtDate(e0))} → ${esc(fmtDate(e1))}</summary><div class="tm-w"><table class="tm-t ot-t"><thead><tr><th class="tm-l">Account</th><th class="num">Start</th><th class="num">Its lines</th><th class="num">End</th><th class="num">Gap</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="muted sm">Gap ≠ 0 on one account: a line missing from its statement or the balance taken on another day. All gaps 0 but a difference above: a move between these accounts and another group (savings, investments) that the plan does not see, or a cost in "Between my accounts".</p></details>`;
-  }
   // open differences on current accounts, Livret A and LDDS: rolled balance vs the statement / check-in, with a button to book each one
   function reconCard(cols) {
     const items = []; cols.filter((c) => c.kind !== 'F').forEach((c) => W_BOOK.forEach((k) => { const o = c.open && c.open[k]; if (o != null && Math.abs(o) >= W_TOL) items.push({ c, k, o }); }));
     const lab = (k) => (WG.find((g) => g[0] === k) || [0, k])[1]; const booked = (S.overrides && S.overrides.recon) || {};
     const nb = Object.values(booked).reduce((n, x) => n + Object.keys(x || {}).length, 0);
-    const rows = items.map(({ c, k, o }) => { const i = cols.indexOf(c); const pk = i > 0 ? cols[i - 1].key : null;
-      return `<tr><th scope="row" class="tm-l">${esc(lab(k))} · ${esc(c.h)}</th><td class="num">${tmNum(c.roll[k])}</td><td class="num">${tmNum(c.s[k])}</td><td class="num">${tmNum(o, true)}</td><td><button type="button" class="btn sm" data-act="w-book" data-m="${c.key}" data-k="${k}" data-v="${C.r2(o)}">Book</button></td></tr><tr><td colspan="5">${reconDetail(c, k, pk)}</td></tr>`; }).join('');
+    const rows = items.map(({ c, k, o }) => `<tr><th scope="row" class="tm-l">${esc(lab(k))} · ${esc(c.h)}</th><td class="num">${tmNum(c.roll[k])}</td><td class="num">${tmNum(c.s[k])}</td><td class="num">${tmNum(o, true)}</td><td><button type="button" class="btn sm" data-act="w-book" data-m="${c.key}" data-k="${k}" data-v="${C.r2(o)}">Book</button></td></tr>`).join('');
     return `<section class="card" id="w-recon"><div class="card-h"><h2>Reconcile</h2><span class="muted sm">Rolled balance vs statements and check-ins</span></div>
       ${items.length ? `<div class="tm-w"><table class="tm-t ot-t"><thead><tr><th class="tm-l">Account · cycle</th><th class="num">Rolled</th><th class="num">Statement</th><th class="num">Difference</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted sm">Book a difference as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain).</p>` : '<p class="muted sm">All balances tie to the statements and check-ins.</p>'}
       ${nb ? `<p class="sm"><button type="button" class="btn sm ghost" data-act="w-unbook">Clear ${nb} booked adjustment${nb > 1 ? 's' : ''}</button></p>` : ''}</section>`;
