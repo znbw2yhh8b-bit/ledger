@@ -21,17 +21,21 @@
   }
   // ---- Actuals ----
   // the closed cycles of the current fiscal year (Nov–Oct): YTD2
-  const otFyClosed = (closed, th) => closed.filter((k) => M.fyOf(k) === M.fyOf(th));
+  // year to date, the current cycle included: YTD1 calendar year (Jan–), YTD2 fiscal year (Nov–Oct)
+  const otYtd1 = (closed, th) => closed.filter((k) => k.slice(0, 4) === th.slice(0, 4)).concat(th);
+  const otYtd2 = (closed, th) => closed.filter((k) => M.fyOf(k) === M.fyOf(th)).concat(th);
   function otActualCols(portrait) {
     const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th); const cs = closed.map((k) => ({ c: tmFromStmt(k), h: otCode(k, 'A'), act: k, k }));
     cs.push({ c: tmFromStmt(th), h: otCode(th, 'C'), cls: 'tm-now', act: th, k: th });
-    const l6 = closed.slice(-6).map(tmFromStmt); const y = th.slice(0, 4); const ytd = closed.filter((k) => k.startsWith(y)).map(tmFromStmt); const ytd2 = otFyClosed(closed, th).map(tmFromStmt); const ltm = closed.slice(-12).map(tmFromStmt);
-    const fx = [{ c: otAvg(l6), h: 'L6M avg', sum: 1, cls: 'tm-u ot-sum' }, { c: otSum(ytd), h: 'YTD1', sub: 'Jan–', sum: 1, cls: 'tm-u' }, { c: otSum(ytd2), h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2), sum: 1, cls: 'tm-u' }, { c: otSum(ltm), h: 'LTM', sum: 1, cls: 'tm-u' }];
+    const l6 = closed.slice(-6).map(tmFromStmt); const y = th.slice(0, 4); const ytd = otYtd1(closed, th).map(tmFromStmt); const ytd2 = otYtd2(closed, th).map(tmFromStmt); const ltm = closed.slice(-12).map(tmFromStmt);
+    const fx = [{ c: otAvg(l6), h: 'L6M avg', sum: 1, cls: 'tm-u ot-sum' }, { c: otSum(ytd), h: 'YTD1', sub: 'Jan' + th.slice(2, 4) + '–', sum: 1, cls: 'tm-u' }, { c: otSum(ytd2), h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2), sum: 1, cls: 'tm-u' }, { c: otSum(ltm), h: 'LTM', sum: 1, cls: 'tm-u' }];
     return cs.concat(fx.filter((q) => q.c));
   }
   // ---- Forecast: today, then 5 year-ends ----
-  const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, y, i, cls: 'tm-plan' })); const th = tmThis(); const ks = D.complete.filter((k) => k < th && M.fyOf(k) === f.y1);
-    const a = ks.length ? otSum(ks.map(tmFromStmt)) : null; if (a) cs.unshift({ h: 'YTD2', sub: 'FY' + String(f.y1).slice(2) + ', ' + ks.length + ' of 12', a, cls: 'tm-u' }); return cs; };
+  const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, y, i, cls: 'tm-plan' })); const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th);
+    const k1 = otYtd1(closed, th), k2 = otYtd2(closed, th); const a1 = otSum(k1.map(tmFromStmt)), a2 = otSum(k2.map(tmFromStmt));
+    if (a2) cs.unshift({ h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2) + ', ' + k2.length + ' of 12', a: a2, cls: 'tm-u' });
+    if (a1) cs.unshift({ h: 'YTD1', sub: 'Jan' + th.slice(2, 4) + ', ' + k1.length + ' of 12', a: a1, cls: 'tm-u' }); return cs; };
   // the actual figure for a forecast row, for the YTD2 column (only money in, costs and left over have one)
   const fcAct = (q, l, k) => { const a = q.a; if (l === 'Money in' && k === 'tot') return a.in.total; if (l === 'Net pay') return a.in.spendable; if (l === 'Bonus') return a.in.bonus;
     if (l === 'Costs' && k === 'tot') return a.cost.total; if (l === 'Left over') return a.left; const b = C.BUCKET6.find(([, n]) => n === l); if (b && k === 'ot-bk') return a.cost[b[0]]; return null; };
@@ -98,7 +102,7 @@
     const tabs = otSeg('tab', tab, [['act', 'Actuals'], ['fc', 'Forecast']]);
     if (tab === 'act') { const cols = otActualCols(portrait); const met = ui.otAm === 'left' ? 'left' : 'cost';
       return `<div class="row ot-top">${tabs}</div><section class="card"><div class="card-h"><h2>${met === 'left' ? 'Left over' : 'Costs'}</h2>${otSeg('am', met, [['cost', 'Costs'], ['left', 'Left over']])}</div><div class="chart-w" id="ot-chart"></div></section>
-        <section class="card" id="sec-table"><div class="card-h"><h2>Actuals</h2><span class="muted sm">Swipe left for L6M avg, YTD1 (calendar), YTD2 (fiscal year), LTM</span></div>${otTable(cols)}</section>`; }
+        <section class="card" id="sec-table"><div class="card-h"><h2>Actuals</h2><span class="muted sm">Swipe left for L6M avg, YTD1 (calendar), YTD2 (fiscal year), both with the current cycle to date, LTM</span></div>${otTable(cols)}</section>`; }
     const f = fcRun();
     return `<div class="row ot-top">${tabs}</div>
       <section class="card"><div class="card-h"><h2>${ui.otFm === 'left' ? 'Left over' : 'Wealth'}</h2>${otSeg('fm', ui.otFm || 'nw', [['nw', 'Wealth'], ['left', 'Left over']])}</div><div class="chart-w" id="ot-chart"></div></section>
