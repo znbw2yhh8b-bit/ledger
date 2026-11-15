@@ -35,7 +35,8 @@
   // an actual YTD column: the Actuals-tab sums (money in, costs, left over) plus where the money went by account, from the same statements (M.colFromStatement)
   function fcYtd(ks) { if (!ks.length) return null; const a = otSum(ks.map(tmFromStmt)); if (!a) return null; const to = {};
     ks.forEach((k) => { const r = M.colFromStatement(stmtOf(k), k, 'A', D.txs); Object.entries(r.assets).forEach(([x, v]) => { if (x !== 'total') to[x] = (to[x] || 0) + (+v || 0); }); });
-    a.to = to; a.to.total = Object.keys(to).filter((x) => x !== 'total').reduce((t, x) => t + to[x], 0); return a; }
+    const dir = {}; ks.forEach((k) => { const st = stmtOf(k); const by = st.income.directBy || { pee: st.income.direct || 0 }; Object.entries(by).forEach(([x, v]) => { if (+v) dir[x] = (dir[x] || 0) + +v; }); });
+    a.dir = dir; a.to = to; a.to.total = Object.keys(to).filter((x) => x !== 'total').reduce((t, x) => t + to[x], 0); return a; }
   const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, y, i, cls: 'tm-plan' })); const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th);
     const k1 = otYtd1(closed, th), k2 = otYtd2(closed, th); const a1 = fcYtd(k1), a2 = fcYtd(k2);
     if (a2) cs.unshift({ h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2) + ', ' + k2.length + ' of 12', a: a2, cls: 'tm-u' });
@@ -45,11 +46,16 @@
     // actual money in on the forecast's lines: net pay and bonus as on Actuals; money paid straight into an account (participation...) on the first line that goes straight to one, else on its own row
     const inc = (fcAssume().inc || []).filter((l) => l.on !== false); const nm = (l) => (l.name || '').trim() || 'Income';
     const payN = (inc.find((l) => l.id === 'pay') ? nm(inc.find((l) => l.id === 'pay')) : 'Net pay'), bonN = (inc.find((l) => l.id === 'bonus') ? nm(inc.find((l) => l.id === 'bonus')) : 'Bonus');
-    const dl = inc.find((l) => l.acct && l.acct !== 'cash'); let dirN = dl ? nm(dl) : 'Other'; const anyDir = cols.some((q) => q.a && Math.abs(q.a.in.direct) >= 0.5);
-    [payN, bonN].forEach((n) => { if (cols.some((q) => q.a) && !names.includes(n)) names.push(n); }); if (anyDir && !names.includes(dirN)) names.push(dirN);
-    const actItem = (a, n) => (n === payN ? a.in.spendable : n === bonN ? a.in.bonus : n === dirN ? a.in.direct : 0);
+    // money paid straight into an account goes on the forecast line that goes to that same account (PEE: Participation); an account with no such line gets its own row
+    const accN = (k) => ((S.cfg.accounts.find((x) => x.key === k) || {}).name || k).replace(/\s*••\d+/, '');
+    const dirKeys = [...new Set(cols.filter((q) => q.a).flatMap((q) => Object.keys(q.a.dir).filter((k) => Math.abs(q.a.dir[k]) >= 0.5)))];
+    const dirRow = {}; dirKeys.forEach((k) => { const l = inc.find((x) => x.acct === k); dirRow[k] = l ? nm(l) : 'Paid into ' + accN(k); });
+    [payN, bonN].forEach((n) => { if (cols.some((q) => q.a) && !names.includes(n)) names.push(n); }); dirKeys.forEach((k) => { if (!names.includes(dirRow[k])) names.push(dirRow[k]); });
+    const actItem = (a, n) => (n === payN ? a.in.spendable : n === bonN ? a.in.bonus : 0) + C.sum(dirKeys.filter((k) => dirRow[k] === n), (k) => a.dir[k] || 0);
     const AC = [['cash', 'Current accounts'], ['la', 'Livret A'], ['ld', 'LDDS'], ['pea', 'PEA'], ['other', 'Other investments'], ['pee', 'PEE'], ['pc', 'PERCOL']].concat(S.cfg.accounts.filter((a) => M.extraKeys([a]).length).map((a) => [a.key, a.name]))
       .filter(([k]) => f.years.some((y) => Math.abs(y.assets[k] || 0) >= 0.5) || cols.some((q) => q.a && Math.abs(q.a.to[k] || 0) >= 0.5));
+    // any other account the actuals paid into (e.g. a cash account you added) gets its own row, so the rows add up to the total
+    cols.filter((q) => q.a).forEach((q) => Object.keys(q.a.to).forEach((k) => { if (k !== 'total' && Math.abs(q.a.to[k]) >= 0.5 && !AC.some(([x]) => x === k)) AC.push([k, accN(k)]); }));
     // each row: [class, label, forecast value, actual value (YTD columns; none = blank)]
     const R = [['h', 'Money in']].concat(names.map((n) => ['', n, (q) => q.y.items[n] || 0, (a) => actItem(a, n)]), [['tot', 'Money in', (q) => q.y.in.total, (a) => a.in.total], ['h', 'Costs']],
       C.BUCKET6.map(([k, n]) => ['ot-bk', n, (q) => q.y.cost[k], (a) => a.cost[k]]), [['tot', 'Costs', (q) => q.y.cost.total, (a) => a.cost.total], ['tot', 'Left over', (q) => q.y.left, (a) => a.left], ['h', 'To assets']],
