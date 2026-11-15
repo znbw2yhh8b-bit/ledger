@@ -8,11 +8,10 @@
   const fcY1 = () => M.fyOf(fcKey()); // the first forecast year: the current fiscal year, in full
   const fcFrac = () => 0; // full years only: the start point is the October close, not today
   const fcStartKey = () => (fcY1() - 1) + '-10'; // the October cycle that closed the last fiscal year
-  // starting balances: each account at the October close (check-in point, else statements / automatic balances / typed past balance), today's balance when none is known
+  // starting balances: the Wealth page's rolled-forward, reconciled balances at the October close (wActCols); an account with none there takes today's balance
   function fcBal0() {
-    const k = fcStartKey(), R = C.monthRange(k, S.cfg.cutoff); const pts = (S.snapshots && S.snapshots.points) || {};
-    const d = Object.keys(pts).filter((x) => x <= R.to && x > R.from).sort().pop(); const pt = d ? pts[d] : null; const miss = [];
-    const b = M.balRows(S.cfg.accounts, (a) => { let v = pt && pt[a.key] != null ? +pt[a.key] : typeof wAcctAt === 'function' ? wAcctAt(a, R.to, k) : null; if (v == null) { v = +a.balance || 0; if (Math.abs(v) >= 0.5) miss.push(a.name); } return v; });
+    const k = fcStartKey(); const col = typeof wActCols === 'function' ? wActCols().find((c) => c.key === k && c.kind === 'A') : null; const miss = [];
+    const b = M.balRows(S.cfg.accounts, (a) => a.balance); if (col) Object.keys(b).forEach((x) => { if (col.b[x] != null) b[x] = col.b[x]; else if (Math.abs(b[x]) >= 0.5) miss.push(x); }); else miss.push('all accounts');
     D.fcMiss = miss; return b;
   }
   const fcBalNow = () => M.balRows(S.cfg.accounts, (a) => a.balance); // today's balances, for goals

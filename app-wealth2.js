@@ -34,18 +34,48 @@
     if (!any) return null; miss.forEach((g) => { o[g] = null; }); o.total = miss.size ? null : C.sum(WG, ([k]) => o[k] || 0); o.est = true; return o;
   }
   const W_START = '2026-05'; // Wealth history starts with the May26 cycle
-  function wCols() {
-    const th = tmThis(); const pts = (S.snapshots && S.snapshots.points) || {}; const cols = [];
-    D.complete.filter((k) => k >= W_START && k < th).forEach((k) => { const end = C.monthRange(k, S.cfg.cutoff).to; const d = Object.keys(pts).filter((x) => x <= end && x > C.monthRange(k, S.cfg.cutoff).from).sort().pop();
-      cols.push({ key: k, h: otCode(k, 'A'), kind: 'A', b: d ? wBal(pts[d]) : wHistBal(end, k), col: tmFromStmt(k), raw: M.colFromStatement(stmtOf(k), k, 'A', D.txs) }); });
-    cols.push({ key: th, h: otCode(th, 'C'), kind: 'C', b: wBal(null), cls: 'tm-now', raw: M.colFromStatement(stmtOf(th), th, 'C', D.txs), est: true });
-    const f = fcRun(); f.years.forEach((y, i) => { const b = {}; WG.forEach(([k]) => { b[k] = y.bal[k] || 0; }); b.total = y.bal.total;
-      cols.push({ key: 'y' + y.y, h: y.code, kind: 'F', cls: 'tm-plan', b, paid: y.assets, gain: y.gain, lo: f.low[i], hi: f.high[i], real: f.real[i] }); });
-    // actual returns: paid in from the statements, gain = end - start - paid in (blank until both balances exist)
-    cols.forEach((c, i) => { if (c.kind !== 'A' && c.kind !== 'C') return; c.paid = { ...c.raw.assets }; const p = cols[i - 1]; c.gain = null;
-      if (p && p.b && c.b && p.kind === 'A') { c.gain = {}; WG.forEach(([k]) => { c.gain[k] = c.b[k] == null || p.b[k] == null ? null : c.b[k] - p.b[k] - (c.paid[k] || 0); }); const full = WG.every(([k]) => k === 'cash' || (p.b[k] == null) === (c.b[k] == null) || Math.abs(c.b[k] || 0) < 0.5); c.gain.total = full && c.b.total != null && p.b.total != null ? c.b.total - p.b.total - C.sum(WG, ([k]) => c.paid[k] || 0) : null; } });
+  // ---------- balances by roll-forward ----------
+  // Each actual column's balance = the previous column's balance + the moves into each account from the statements (MTD for today), then reconciled to the balances
+  // the statements and your check-ins give (the "source"):
+  //  - market-valued accounts (PEA, PEE, PERCOL, other investments, assets you added): the difference is the market gain, booked by itself;
+  //  - current accounts, Livret A, LDDS: the difference stays open until you book it (interest, a missed line...) on the Reconcile card; booked amounts are kept in overrides.recon.
+  // The first column (and an account seen for the first time) starts from its source balance. With no source, the rolled balance stands (marked estimated).
+  const W_BOOK = ['cash', 'la', 'ld']; const W_TOL = 1;
+  function wActCols() {
+    const th = tmThis(); const pts = (S.snapshots && S.snapshots.points) || {}; const cols = []; const book = (S.overrides && S.overrides.recon) || {};
+    D.complete.filter((k) => k >= W_START && k < th).forEach((k) => { const R = C.monthRange(k, S.cfg.cutoff); const d = Object.keys(pts).filter((x) => x <= R.to && x > R.from).sort().pop();
+      cols.push({ key: k, h: otCode(k, 'A'), kind: 'A', s: d ? wBal(pts[d]) : wHistBal(R.to, k), col: tmFromStmt(k), raw: M.colFromStatement(stmtOf(k), k, 'A', D.txs) }); });
+    cols.push({ key: th, h: otCode(th, 'C'), kind: 'C', s: wBal(null), cls: 'tm-now', raw: M.colFromStatement(stmtOf(th), th, 'C', D.txs), est: true });
+    cols.forEach((c, i) => { const p = cols[i - 1]; const src = c.s || {}; c.paid = {}; WG.forEach(([k]) => { c.paid[k] = k === 'dep' ? 0 : +(c.raw.assets[k] || 0); });
+      c.b = {}; c.roll = {}; c.diff = {}; c.gain = {}; c.open = {}; c.estK = {}; const bk = book[c.key] || {};
+      WG.forEach(([k]) => { const sv = src[k] != null ? +src[k] : null;
+        if (!p || p.b[k] == null) { c.b[k] = sv; c.gain[k] = null; if (p && sv != null) c.roll[k] = null; return; }
+        const roll = p.b[k] + c.paid[k]; c.roll[k] = roll; const d = sv == null ? null : sv - roll; c.diff[k] = d;
+        if (!W_BOOK.includes(k)) { c.gain[k] = d == null ? 0 : d; if (d == null && Math.abs(roll) >= 0.5) c.estK[k] = true; }
+        else { const bv = bk[k] != null ? +bk[k] : 0; c.gain[k] = bv; c.open[k] = d == null ? null : Math.abs(d - bv) >= W_TOL ? d - bv : 0; }
+        c.b[k] = roll + c.gain[k]; });
+      c.b.total = C.sum(WG, ([k]) => c.b[k] || 0); c.paid.total = C.sum(WG, ([k]) => c.paid[k] || 0); c.gain.total = p ? C.sum(WG, ([k]) => c.gain[k] || 0) : null;
+      c.est = c.kind === 'C' || Object.keys(c.estK).length > 0; });
     return cols;
   }
+  function wCols() {
+    const cols = wActCols(); const f = fcRun(); f.years.forEach((y, i) => { const b = {}; WG.forEach(([k]) => { b[k] = y.bal[k] || 0; }); b.total = y.bal.total;
+      cols.push({ key: 'y' + y.y, h: y.code, kind: 'F', cls: 'tm-plan', b, paid: y.assets, gain: y.gain, lo: f.low[i], hi: f.high[i], real: f.real[i] }); });
+    return cols;
+  }
+  // open differences on current accounts, Livret A and LDDS: rolled balance vs the statement / check-in, with a button to book each one
+  function reconCard(cols) {
+    const items = []; cols.filter((c) => c.kind !== 'F').forEach((c) => W_BOOK.forEach((k) => { const o = c.open && c.open[k]; if (o != null && Math.abs(o) >= W_TOL) items.push({ c, k, o }); }));
+    const lab = (k) => (WG.find((g) => g[0] === k) || [0, k])[1]; const booked = (S.overrides && S.overrides.recon) || {};
+    const nb = Object.values(booked).reduce((n, x) => n + Object.keys(x || {}).length, 0);
+    const rows = items.map(({ c, k, o }) => `<tr><th scope="row" class="tm-l">${esc(lab(k))} · ${esc(c.h)}</th><td class="num">${tmNum(c.roll[k])}</td><td class="num">${tmNum(c.s[k])}</td><td class="num">${tmNum(o, true)}</td><td><button type="button" class="btn sm" data-act="w-book" data-m="${c.key}" data-k="${k}" data-v="${C.r2(o)}">Book</button></td></tr>`).join('');
+    return `<section class="card" id="w-recon"><div class="card-h"><h2>Reconcile</h2><span class="muted sm">Rolled balance vs statements and check-ins</span></div>
+      ${items.length ? `<div class="tm-w"><table class="tm-t ot-t"><thead><tr><th class="tm-l">Account · cycle</th><th class="num">Rolled</th><th class="num">Statement</th><th class="num">Difference</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted sm">Book a difference as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain).</p>` : '<p class="muted sm">All balances tie to the statements and check-ins.</p>'}
+      ${nb ? `<p class="sm"><button type="button" class="btn sm ghost" data-act="w-unbook">Clear ${nb} booked adjustment${nb > 1 ? 's' : ''}</button></p>` : ''}</section>`;
+  }
+  document.addEventListener('click', (ev) => { const b = ev.target.closest('[data-act="w-book"],[data-act="w-unbook"]'); if (!b) return; S.overrides.recon = S.overrides.recon || {};
+    if (b.dataset.act === 'w-unbook') { const old = S.overrides.recon; S.overrides.recon = {}; persist('overrides'); changed(); toast('Adjustments cleared', () => { S.overrides.recon = old; persist('overrides'); changed(); }); return; }
+    const m = b.dataset.m, k = b.dataset.k, v = +b.dataset.v; const r = (S.overrides.recon[m] = S.overrides.recon[m] || {}); r[k] = C.r2((+r[k] || 0) + v); persist('overrides'); changed(); toast('Booked ' + eur(v, 2)); });
   const wN = (v, tot) => (v == null ? '' : tmNum(v, tot));
   function wTable(cols, rows) {
     const head = `<tr><th scope="col" class="tm-l">EUR</th>${cols.map((c) => `<th scope="col" class="num ${c.cls || ''}">${c.kind === 'A' ? `<button type="button" class="tm-hb" data-act="tm-month" data-m="${c.key}">${esc(c.h)}</button>` : esc(c.h)}</th>`).join('')}</tr>`;
@@ -60,7 +90,7 @@
     tk.forEach((t) => { g += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${y(t)}" y2="${y(t)}"/><text class="axis" x="${m.l - 6}" y="${y(t) + 4}" text-anchor="end">${esc(compact(t))}</text>`; });
     g += `<defs><pattern id="w-h" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="w-hl" x1="0" y1="0" x2="0" y2="6"/></pattern></defs>`;
     const ci = pts.findIndex((c) => c.kind === 'C'), near = Math.ceil(46 / bw); const lab = new Set(pts.map((c, i) => i).filter((i) => (i % step === 0 || i === pts.length - 1) && (ci < 0 || Math.abs(i - ci) >= near))); if (ci >= 0) lab.add(ci); if (pts.length - 1 !== ci) [...lab].forEach((i) => { if (i !== pts.length - 1 && i !== ci && pts.length - 1 - i < near) lab.delete(i); });
-    pts.forEach((c, i) => { const x0 = m.l + i * bw + bw * 0.2, w = bw * 0.6, cx = x0 + w / 2; const v = known(c); const gs = fcGroups(c.b); let acc = 0; const op = c.kind === 'A' ? (c.b.total != null ? 1 : 0.5) : c.kind === 'C' ? 0.85 : 0.45;
+    pts.forEach((c, i) => { const x0 = m.l + i * bw + bw * 0.2, w = bw * 0.6, cx = x0 + w / 2; const v = known(c); const gs = fcGroups(c.b); let acc = 0; const op = c.kind === 'A' ? (c.est ? 0.5 : 1) : c.kind === 'C' ? 0.85 : 0.45;
       FC_GRP.forEach(([k, l, , col]) => { const gv = Math.max(0, gs[k] || 0); if (gv < 0.5) return; g += `<rect x="${x0.toFixed(1)}" y="${y(acc + gv).toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(0.5, y(acc) - y(acc + gv)).toFixed(1)}" fill="${col}" opacity="${op}"><title>${esc(c.h)}, ${esc(l)}: ${esc(eur(gv))}</title></rect>`; acc += gv; });
       if (c.kind === 'C') g += `<rect x="${x0.toFixed(1)}" y="${y(acc).toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(1, y(0) - y(acc)).toFixed(1)}" fill="url(#w-h)" opacity=".5"/>`;
       if (c.lo != null && c.hi != null) g += `<line x1="${cx.toFixed(1)}" x2="${cx.toFixed(1)}" y1="${y(c.lo).toFixed(1)}" y2="${y(c.hi).toFixed(1)}" class="w-rng"/><line x1="${(cx - 4).toFixed(1)}" x2="${(cx + 4).toFixed(1)}" y1="${y(c.lo).toFixed(1)}" y2="${y(c.lo).toFixed(1)}" class="w-rng"/><line x1="${(cx - 4).toFixed(1)}" x2="${(cx + 4).toFixed(1)}" y1="${y(c.hi).toFixed(1)}" y2="${y(c.hi).toFixed(1)}" class="w-rng"/>`;
@@ -68,7 +98,7 @@
       if (lab.has(i)) g += `<text class="axis" x="${cx.toFixed(1)}" y="${H - 8}" text-anchor="middle">${esc(c.h.replace(/[ABC]$/, ''))}</text>`;
       if (i === pts.length - 1) { let a2 = 0; FC_GRP.forEach(([k, l]) => { const gv = Math.max(0, gs[k] || 0); if (y(a2) - y(a2 + gv) >= 9) g += `<text class="axis" x="${(x0 + w + 4).toFixed(1)}" y="${(y(a2 + gv / 2) + 4).toFixed(1)}">${esc(l.split(' ')[0])}</text>`; a2 += gv; }); } });
     const rp = pts.map((c, i) => (c.real != null ? `${(m.l + i * bw + bw / 2).toFixed(1)},${y(c.real).toFixed(1)}` : null)).filter(Boolean); if (rp.length > 1) g += `<polyline class="w-real" points="${rp.join(' ')}"/>`;
-    el.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Total wealth by cycle and year end">${g}</svg><p class="muted sm ot-key">Solid: actual. Faded: some accounts unknown. Hatched: today. Light: forecast, with the P10–P90 range. Dashed: forecast in today's money.</p>`;
+    el.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img" aria-label="Total wealth by cycle and year end">${g}</svg><p class="muted sm ot-key">Solid: actual, rolled forward and reconciled. Faded: some balances only rolled, no statement yet. Hatched: today. Light: forecast, with the P10–P90 range. Dashed: forecast in today's money.</p>`;
   }
   function paulCard() {
     const p = D.paul; if (!p) return ''; const th = tmThis(); const ks = D.complete.filter((k) => k >= MONTH_START).concat([th]);
@@ -97,14 +127,15 @@
         return `<div class="lq-row lq-g"><span class="lq-n"><i class="lq-dot lq-c${i}"></i>${esc(x.l)}${solo ? `<span class="muted">${esc(mine[0].n)}</span>` : ''}</span>${one ? lqBar(x.v, i) : '<span></span>'}<span class="num">${tmNum(x.v, true)}</span><span class="num muted">${pct(x.v)}</span></div>${one ? '' : mine.map((a) => `<div class="lq-row lq-a"><span class="lq-n">${esc(a.n)}</span>${lqBar(a.v, i)}<span class="num">${tmNum(a.v)}</span><span class="num muted">${pct(a.v)}</span></div>`).join('')}`; }).join('')}</div>`;
     const has = (k) => cols.some((c) => c.b && Math.abs(c.b[k] || 0) >= 0.5);
     const rows = WG.filter(([k]) => has(k)).map(([k, l]) => [l, (c) => (c.b ? c.b[k] : null)]).concat([['Total wealth', (c) => (c.b ? c.b.total : null), 'tot'], ["Total wealth, today's money", (c) => (c.kind === 'F' ? c.real : null), ''], ['Wealth low (P10)', (c) => (c.kind === 'F' ? c.lo : 0), ''], ['Wealth high (P90)', (c) => (c.kind === 'F' ? c.hi : 0), '']]);
-    const rr = []; WG.filter(([k]) => has(k) && k !== 'dep').forEach(([k, l]) => { rr.push([l, 'h'], ['Paid in', (c) => (c.paid ? c.paid[k] || 0 : null)], ['Gain', (c) => (c.gain && k !== 'cash' ? c.gain[k] : null)]); });
+    const rr = []; WG.filter(([k]) => has(k) && k !== 'dep').forEach(([k, l]) => { rr.push([l, 'h'], ['Paid in', (c) => (c.paid ? c.paid[k] || 0 : null)], [W_BOOK.includes(k) ? 'Interest and adjustments' : 'Gain', (c) => (c.gain ? c.gain[k] : null)]); if (W_BOOK.includes(k)) rr.push(['Not reconciled', (c) => (c.open ? c.open[k] : null)]); });
     rr.push(['Total', 'h'], ['Paid in', (c) => (c.paid ? C.sum(WG, ([k]) => c.paid[k] || 0) : null), 'tot'], ['Gain', (c) => (c.gain ? c.gain.total : null), 'tot']);
     return `<section class="card w-tot"><div class="card-h"><h2>Net worth</h2></div>
         <div class="w-hero"><div class="w-fig"><span class="w-lbl">As of ${esc(fmtDate(D.today))}, EUR</span><b class="w-big">${tmNum(nw, true)}</b></div></div>
         ${liq}</section>
       <section class="card"><div class="card-h"><h2>By account</h2><span class="muted sm">Actual, today, then year ends</span></div><div class="chart-w" id="w-chart"></div>${wTable(cols, rows)}</section>
-      <section class="card"><details class="w-ret" data-k="w-ret"${ui.dOpen['w-ret'] ? ' open' : ''}><summary class="card-h"><h2>Returns</h2><span class="muted sm">Start + paid in + gain = end</span></summary>${wTable(cols, rr)}</details></section>
+      <section class="card"><details class="w-ret" data-k="w-ret"${ui.dOpen['w-ret'] ? ' open' : ''}><summary class="card-h"><h2>Returns</h2><span class="muted sm">Previous balance + paid in + gain = balance</span></summary>${wTable(cols, rr)}</details></section>
       ${goalsCard()}
+      ${reconCard(cols)}
       <div class="grid2 even">${paulCard()}${famCard()}</div>${balSheetHtml()}`;
   }
   after.worth = () => {
