@@ -1175,3 +1175,5 @@ summary.sv-due::-webkit-details-marker { display: none; }
 .st-due .tx.due { margin: 0 0 4px; }
 
 .st-l li .neg { color: var(--bad); }
+
+.lf-row { gap: 8px; margin: 8px 0 4px; }

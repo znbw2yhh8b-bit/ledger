@@ -22,8 +22,8 @@
     if (act === 'away-add') { const g = (id) => document.getElementById(id).value; const iso = (id) => { const m = g(id + '-m'); const last = new Date(+m.slice(0, 4), +m.slice(5, 7), 0).getDate(); return `${m}-${String(Math.min(+g(id + '-d'), last)).padStart(2, '0')}`; }; const f = iso('aw-from'), t = iso('aw-to'); if (t < f) return toast('The end is before the start'); const w = cfg.away = cfg.away || { away: [], home: [] }; const k = g('aw-kind'); (w[k] = w[k] || []).push([f, t]); persist('model'); changed(); return; }
     if (act === 'away-del') { const w = cfg.away; if (w && w[b.dataset.kind]) { const k = b.dataset.kind, i = +b.dataset.i; const gone = w[k].splice(i, 1)[0]; persist('model'); changed(); toast('Removed', () => { w[k].splice(i, 0, gone); persist('model'); changed(); }); } return; }
     if (act === 'info') { ui.info = ui.info === v ? null : v; render(); return; }
-    if (act === 'flag-q') { ui.kind = null; ui.allMonths = false; ui.cfLimit = 40; ui.month = b.dataset.m; ui.q = b.dataset.q || ''; ui.cat = null; ui.bucket = null; ui.onlyTodo = false; ui.ruleOffer = null; drill(); return; }
-    if (act === 'now-todo') { ui.kind = null; ui.allMonths = false; ui.cfLimit = 40; ui.month = b.dataset.m || sharedMonth(); ui.onlyTodo = true; ui.cat = null; ui.bucket = null; ui.q = ''; drill(); return; }
+    if (act === 'flag-q') { ui.kind = null; ui.allMonths = false; ui.cfLimit = 40; ui.month = b.dataset.m; ui.q = b.dataset.q || ''; ui.src = null; ui.dir = null; ui.cat = null; ui.bucket = null; ui.onlyTodo = false; ui.ruleOffer = null; drill(); return; }
+    if (act === 'now-todo') { ui.kind = null; ui.allMonths = false; ui.cfLimit = 40; ui.month = b.dataset.m || sharedMonth(); ui.onlyTodo = true; ui.cat = null; ui.bucket = null; ui.q = ''; ui.src = null; ui.dir = null; drill(); return; }
     if (act === 'tm-month') { ui.month = b.dataset.m; ui.allMonths = false; ui.cfLimit = 40; goFrom('report'); return; }
     if (act === 'go-due') { ui.dueOpen = !ui.dueOpen; render(); return; }
     if (act === 'per') { const ks = cycleKeys(); const k = ks[ks.indexOf(sharedMonth()) + +v]; if (k) setMonth(k); return; }
@@ -31,7 +31,9 @@
     if (act === 'sheet-close') { ui.sheetOpen = false; render(); return; }
     if (act === 'bk-open') { ui.bkOpen = ui.bkOpen || {}; ui.bkOpen[v] = !ui.bkOpen[v]; render(); return; }
     if (act === 'upd-m') { ui.updM = ui.updM === v ? null : v; render(); return; }
-    if (act === 'f-clear') { if (v === 'cat') { ui.cat = null; ui.bucket = null; ui.kind = null; } else if (v === 'todo') ui.onlyTodo = false; else if (v === 'q') ui.q = ''; ui.cfLimit = 40; ui.ruleOffer = null; render(); return; }
+    if (act === 'lf-src') { ui.src = v || null; ui.cfLimit = 40; render(); return; }
+    if (act === 'lf-dir') { ui.dir = v || null; ui.cfLimit = 40; render(); return; }
+    if (act === 'f-clear') { if (v === 'src') ui.src = null; else if (v === 'dir') ui.dir = null; else if (v === 'cat') { ui.cat = null; ui.bucket = null; ui.kind = null; } else if (v === 'todo') ui.onlyTodo = false; else if (v === 'q') ui.q = ''; ui.cfLimit = 40; ui.ruleOffer = null; render(); return; }
     if (act === 'back') { const to = ui.from; ui.from = null; ui.fromTo = null; if (to) go(to); return; }
     if (act === 'oneoff') { S.overrides.oneoff = S.overrides.oneoff || {}; if (S.overrides.oneoff[v]) delete S.overrides.oneoff[v]; else S.overrides.oneoff[v] = true; persist('overrides'); changed(); return; }
     if (act === 'norm') { ui.norm = v === '1'; render(); return; }

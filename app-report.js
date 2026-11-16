@@ -220,6 +220,16 @@
       rideN: ride.length, rideS: sum(ride), snackN: snack.length, snackS: sum(snack),
       paul: sp('Paid for Paul'), famPct: inc > 0 ? (sp('Paid for Paul') + sp('Support for parents')) / inc : null, bigS: sum(big), bigPct: flexT > 0 ? sum(big) / flexT : null, flexT };
   }
+  // search: accent- and case-blind, every word must match somewhere; amounts match 12,50 / 12.50 / 12.5 / -12
+  const qNorm = (x) => String(x == null ? '' : x).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  function qMatch(q, fields, amt) {
+    const hay = qNorm(fields.join(' ')); const a = Math.abs(+amt || 0); const am = [a.toFixed(2), a.toFixed(2).replace('.', ','), String(a), String(a).replace('.', ',')];
+    return qNorm(q).split(/\s+/).filter(Boolean).every((w) => {
+      const n = w.replace(/^[-+−€]+|€$/g, '');
+      if (/^\d+([.,]\d+)?$/.test(n)) { const v = n.replace(',', '.'); if (am.some((s) => s.replace(',', '.').startsWith(v))) return true; }
+      return hay.includes(w);
+    });
+  }
   // the lines behind the figures: filtered by the month table, by To classify, or by search
   function vLines() {
     const cfg = S.cfg; if (!D.keys.length) return emptyState();
@@ -231,12 +241,19 @@
     else if (ui.bucket) list = list.filter((t) => M.bucketOf(cfg, t.cat) === ui.bucket);
     if (ui.onlyTodo) list = list.filter((t) => t.cat === 'To classify');
     if (!ui.showTransfers && ui.cat !== 'Between my accounts' && ui.bucket !== 'internal') list = list.filter((t) => M.bucketOf(cfg, t.cat) !== 'internal');
-    if (ui.q) { const q = ui.q.toUpperCase(); list = list.filter((t) => (t.desc + ' ' + (t.det || []).join(' ') + ' ' + t.cat).toUpperCase().includes(q) || String(Math.abs(t.amt)).includes(q)); }
+    // filters: where the money went through, and which way
+    const srcOf = (t) => t.live ? 'ap' : String(t.acct || '').startsWith('SG') ? 'SG' : String(t.acct || '');
+    const SRC_L = { ap: 'Apple Pay', SG: 'Société Générale', REV: 'Revolut', TR: 'Trade Republic' };
+    const srcs = [...new Set(list.map(srcOf).filter(Boolean))].sort((a, b) => (a === 'ap') - (b === 'ap') || a.localeCompare(b));
+    if (ui.src && !srcs.includes(ui.src)) srcs.push(ui.src);
+    if (ui.src) list = list.filter((t) => srcOf(t) === ui.src);
+    if (ui.dir === 'out') list = list.filter((t) => t.amt < 0); else if (ui.dir === 'in') list = list.filter((t) => t.amt > 0);
+    if (ui.q) list = list.filter((t) => qMatch(ui.q, [t.desc, C.merchant(t), (t.det || []).join(' '), t.cat, SRC_L[srcOf(t)] || t.acct, t.live ? 'apple pay' : '', fmtDate(t.date)], t.amt));
     list = list.slice().sort((a, b) => b.date.localeCompare(a.date) || a.amt - b.amt);
     const todoN = D.txs.filter((t) => (allM || t.month === ui.month) && t.cat === 'To classify').length;
     // long lists are shown in pages so the iPad stays quick
     const lim = ui.cfLimit || 40; const shown = list.slice(0, lim); const total = C.sum(list, (t) => t.amt);
-    const piL = ui.kind || ui.cat || ui.bucket || ui.onlyTodo ? [] : (allM ? Object.values((S.overrides || {}).paidIn || {}) : paidInOf(ui.month)).filter((e) => !ui.q || (e.name + ' ' + e.amt).toUpperCase().includes(ui.q.toUpperCase())).sort((a, b) => b.date.localeCompare(a.date));
+    const piL = ui.kind || ui.cat || ui.bucket || ui.onlyTodo ? [] : (allM ? Object.values((S.overrides || {}).paidIn || {}) : paidInOf(ui.month)).filter((e) => !ui.src && ui.dir !== 'out' && (!ui.q || qMatch(ui.q, [e.name, 'income'], e.amt))).sort((a, b) => b.date.localeCompare(a.date));
     const piRows = piL.map((e) => { const to = (PAID_TO_F().find(([k]) => k === e.to) || [0, e.to])[1]; return `<li class="txr"><div class="tx-d">${fmtDate(e.date)}</div><div class="tx-m"><div class="tx-n">${esc(e.name || 'Income')} <span class="tag tag-m">Added</span></div><div class="tx-s">Into ${esc(to)}</div></div><span class="sm muted pi-c">Paid straight to savings</span><div class="tx-a num pos">${eurL(e.amt, 2)}${ui.armed === e.id ? `<button class="btn-x armed" data-act="pi-del" data-v="${e.id}" aria-label="Tap again to delete this income">Delete</button>` : `<button class="btn-x" data-act="pi-del" data-v="${e.id}" aria-label="Delete this income" title="Delete this income">${icon('x', 'sm')}</button>`}</div></li>`; }).join('');
     let lastM = null; const rows = shown.map((t) => { let h = ''; if (allM && t.month !== lastM) { lastM = t.month; h = `<li class="tx-mh">${ML(t.month, true)}</li>`; } return h + txRow(t); }).join('');
     return `
@@ -245,8 +262,10 @@
         <div class="row wrap"><select id="cf-catsel" class="sel" aria-label="Category"><option value="">All categories</option>${M.BUCKETS.map(([b, l]) => { const cs = C.CATS.map(([c]) => c).filter((c) => M.bucketOf(cfg, c) === b); return cs.length ? `<optgroup label="${esc(l)}"><option value="b:${b}" ${!ui.cat && ui.bucket === b ? 'selected' : ''}>All ${esc(l.toLowerCase())}</option>${cs.map((c) => `<option value="c:${esc(c)}" ${ui.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</optgroup>` : ''; }).join('')}</select>
         <label class="chk"><input type="checkbox" id="all-months" ${allM ? 'checked' : ''}> All months</label><label class="chk"><input type="checkbox" id="show-transfers" ${ui.showTransfers ? 'checked' : ''}> Show transfers</label>
         ${todoN ? `<label class="chk"><input type="checkbox" id="only-todo" ${ui.onlyTodo ? 'checked' : ''}> To classify (${todoN})</label>` : ''}</div></div>
-      <input id="q" class="inp search" type="search" placeholder="Search a shop, amount or category" value="${esc(ui.q)}" autocomplete="off">
-      ${(() => { const f = []; if (ui.kind && KIND[ui.kind]) f.push(['cat', KIND[ui.kind][0]]); else if (ui.cat) f.push(['cat', ui.cat]); else if (ui.bucket) f.push(['cat', BL[ui.bucket]]); if (ui.onlyTodo) f.push(['todo', 'To classify']); if (ui.q) f.push(['q', `“${ui.q}”`]);
+      <input id="q" class="inp search" type="search" placeholder="Search a shop, amount, category or account" value="${esc(ui.q)}" autocomplete="off" enterkeyhint="search">
+      <div class="row wrap lf-row"><div class="seg-ctl" role="group" aria-label="Paid with"><button type="button" data-act="lf-src" data-v="" class="${!ui.src ? 'on' : ''}" aria-pressed="${!ui.src}">All</button>${srcs.map((k) => `<button type="button" data-act="lf-src" data-v="${esc(k)}" class="${ui.src === k ? 'on' : ''}" aria-pressed="${ui.src === k}">${esc(SRC_L[k] || k)}</button>`).join('')}</div>
+        <div class="seg-ctl" role="group" aria-label="Direction">${[['', 'In & out'], ['out', 'Money out'], ['in', 'Money in']].map(([k, l]) => `<button type="button" data-act="lf-dir" data-v="${k}" class="${(ui.dir || '') === k ? 'on' : ''}" aria-pressed="${(ui.dir || '') === k}">${l}</button>`).join('')}</div></div>
+      ${(() => { const f = []; if (ui.kind && KIND[ui.kind]) f.push(['cat', KIND[ui.kind][0]]); else if (ui.cat) f.push(['cat', ui.cat]); else if (ui.bucket) f.push(['cat', BL[ui.bucket]]); if (ui.onlyTodo) f.push(['todo', 'To classify']); if (ui.src) f.push(['src', SRC_L[ui.src] || ui.src]); if (ui.dir) f.push(['dir', ui.dir === 'out' ? 'Money out' : 'Money in']); if (ui.q) f.push(['q', `“${ui.q}”`]);
         return f.length ? `<div class="chips" aria-label="Filters">${f.map(([k, l]) => `<button type="button" class="chip-f" data-act="f-clear" data-v="${k}" aria-label="Remove filter ${esc(l)}">${esc(l)}${icon('x', 'sm')}</button>`).join('')}</div>` : ''; })()}
       ${ui.ruleOffer ? ruleOfferHtml() : ''}
       ${list.length ? `<div class="sm muted lines-tot">Net of these lines: ${eurSigned(total)}</div>` : ''}
