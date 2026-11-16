@@ -1176,4 +1176,5 @@ summary.sv-due::-webkit-details-marker { display: none; }
 
 .st-l li .neg { color: var(--bad); }
 
-.lf-row { gap: 8px; margin: 8px 0 4px; }
+.lf-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 4px; }
+.lf-row > .sel { width: 100%; min-width: 0; }

@@ -93,6 +93,8 @@
     if (t.id === 'pi-to') { ui.pito = t.value; return; }
     if (t.dataset && t.dataset.watch) { const cur = (Array.isArray(cfg.watch) ? cfg.watch : C.WATCH_DEFAULT).slice(); const i = cur.indexOf(t.dataset.watch); if (t.checked && i < 0) cur.push(t.dataset.watch); if (!t.checked && i >= 0) cur.splice(i, 1); cfg.watch = Object.keys(WATCH_NAMES).filter((k) => cur.includes(k)); persist('model'); changed(); return; }
     if (t.id === 'all-months') { ui.allMonths = !!t.checked; ui.cfLimit = 40; render(); return; }
+    if (t.id === 'lf-src') { ui.src = t.value || null; ui.cfLimit = 40; render(); return; }
+    if (t.id === 'lf-dir') { ui.dir = t.value || null; ui.cfLimit = 40; render(); return; }
     if (t.id === 'show-transfers') { ui.showTransfers = !!t.checked; ui.cfLimit = 40; render(); return; }
     if (t.id === 'show-ratios') { cfg.ratios = !!t.checked; persist('model'); changed(); return; }
     if (t.dataset.live) { const e = S.live[t.dataset.live]; if (e) { e.cat = t.value; writeLive(e); changed(); } return; }
