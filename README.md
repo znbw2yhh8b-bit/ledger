@@ -96,7 +96,12 @@ A cycle runs from the 23rd to the 22nd and is named by its end month (Nov26 = 23
 4. **Type your balances** (PEA and the other market values).
 5. **Close Nov26A.** Once a cycle has ended it shows as an actual column on Wealth and Over time; until you close it, its Wealth header says "to close".
 
-During the cycle, Wealth's current column (Dec26C) and its headline move with the month: for current accounts, Livret A and LDDS each account takes the newer of its last statement balance and the balance you typed, then adds the lines and Apple Pay entries dated after it. Market-valued accounts (PEA, PEE, PERCOL) start from the value you typed and add what was paid in after that day: transfers into the PEA, Epsor payments, and income you added on Month straight to an account (participation, abondement). The same carry applies at each cycle end, so a check-in typed mid-cycle no longer turns a later payment into a market loss.
+### How Wealth is built
+
+Every account: end = start + paid in + return. Start is the previous cycle's end; paid in comes from Month.
+
+- **Current accounts, Livret A, LDDS:** balances only ever come from the flows. At a cycle end the statements check them (Reconcile); a difference changes wealth only when you book it (cents, a missed line, Livret A interest in January). During the cycle, the current column adds each account's own lines and Apple Pay entries since the last cycle end. A balance you type is a check, shown in Reconcile under "so far", and never replaces the flows.
+- **PEA, PEE, PERCOL:** you type one value per cycle end from the broker or Epsor app. Gain = value − previous value − paid in. Paid in is the transfers into the account, Epsor payments and income you added on Month straight to it (participation, abondement); what is paid in after the day you typed is added until the next value. Buy fees and bonuses inside the account count in the gain. A cycle with no value typed shows no gain. Returns on Wealth also shows each one since the start: paid in, value, gain.
 
 Mid-cycle uploads are checked as they come in: Reconcile shows "Dec26C so far" for each account whose file carries a balance (the template's `balance` column, Revolut's CSV): its balance at the last cycle end plus its lines must give the file's last balance. A gap there means a line is missing or doubled; booking waits for the cycle end. An SG CSV export has no balance, so fill the template's `balance` column to have SG checked mid-cycle.
 
@@ -136,6 +141,12 @@ create policy "own rows" on public.ledger_kv
 The app then saves every change to Supabase and reloads changes from other devices each time you come back to it. If two devices edit the same thing at once, the last save wins.
 
 **Another backend:** write an object with `init`, `get`, `set`, `list` and `remove` in `storage.js`, and pick it in the `Store` line at the bottom. No page needs to change.
+
+## Changes in v11.5
+
+- Wealth is flows only for current accounts, Livret A and LDDS, today included: typed balances are checks (Reconcile, "so far"), not overrides.
+- Returns: a "since the start" table for PEA, PEE and PERCOL (start, paid in, value, gain, gain on money in).
+- Close step 4 asks only for values you alone can give: PEA, PEE, PERCOL and accounts without bank files (Fortuneo).
 
 ## Changes in v11.4
 

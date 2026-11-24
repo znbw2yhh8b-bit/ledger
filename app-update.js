@@ -3,7 +3,9 @@
   function closeInfo() {
     const cfg = S.cfg; const cur = C.budgetMonth(D.today, cfg.cutoff); const key = C.addMonths(cur, -1); const r = C.monthRange(key, cfg.cutoff);
     const todo = D.txs.filter((t) => t.month === key && t.cat === 'To classify').length;
-    const stale = cfg.accounts.filter((a) => ['cash', 'savings', 'invest', 'locked'].includes(a.tier) && (a.asOf || '') < r.to && +a.balance !== 0);
+    // values only you can give: market-valued accounts, and a current account with no bank files here (Fortuneo). Accounts with statements are checked, not typed.
+    const hasFiles = (a) => Object.values(S.stmts || {}).some((x) => (x.acctKey || ({ REV: 'rev', TR: 'tr' })[x.account] || (String(x.account).startsWith('SG') && x.role !== 'savings' ? 'sg' : null)) === a.key);
+    const stale = cfg.accounts.filter((a) => (['invest', 'locked'].includes(a.tier) || (a.tier === 'cash' && !hasFiles(a))) && (a.asOf || '') < r.to && +a.balance !== 0);
     const snap = D.snaps.some(([d]) => d >= r.to);
     // step 3 is the Reconcile card on Wealth for this cycle: current accounts, Livret A and LDDS at the cycle end against the statements, after what you booked
     let wc = null; try { wc = wActCols().find((c) => c.key === key && c.kind === 'A') || null; } catch (e) { wc = null; }
@@ -15,7 +17,7 @@
       { id: 'stm', title: `Add statements ending ${fmtDate(r.to)}`, ok: C.covers(D.sgTo, r.to), act: 'pick', note: 'The Ledger CSV template, or an SG, Revolut or Trade Republic CSV' },
       { id: 'cls', title: todo ? `Classify ${todo} line${todo > 1 ? 's' : ''}` : 'Every line has a category', ok: todo === 0 && !!D.pl[key], act: 'go-todo' },
       { id: 'rec', title: 'Reconcile balances', ok: wOk, act: 'go-recon', optional: !wCan, note: wNote },
-      { id: 'bal', title: 'Type your balances', ok: stale.length === 0 && snap, act: 'go-bal', note: stale.length ? `To check: ${stale.map((a) => a.name.replace(/ ••\d+/, '')).join(', ')}` : snap ? `Net worth recorded ${fmtDate(D.snaps[D.snaps.length - 1][0])}` : 'One figure per account, PEA value included' },
+      { id: 'bal', title: 'Type your balances', ok: stale.length === 0 && snap, act: 'go-bal', note: stale.length ? `To check: ${stale.map((a) => a.name.replace(/ ••\d+/, '')).join(', ')}` : snap ? `Net worth recorded ${fmtDate(D.snaps[D.snaps.length - 1][0])}` : 'PEA, PEE and PERCOL values, and accounts without bank files' },
       { id: 'exp', title: 'Export a backup to iCloud Drive', ok: (S.cfg.lastExport || '') >= r.to, act: 'backup', optional: true, note: S.cfg.lastExport ? `Last export ${fmtDate(S.cfg.lastExport)}` : 'No export yet' },
       { id: 'close', title: `Close ${M.colCode(key, 'A')}`, ok: !!(S.overrides.reviewed || {})[key], act: 'close-go', note: 'Needs steps 1 to 4' },
     ];
