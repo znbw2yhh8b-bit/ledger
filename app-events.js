@@ -58,6 +58,7 @@
     if (act === 'close-go') { const cl = D.close; if (cl.steps.some((x) => x.id !== 'close' && !x.optional && !x.ok)) return toast('Finish steps 1 to 4 first'); const k = cl.key; S.overrides.reviewed = S.overrides.reviewed || {}; S.overrides.reviewed[k] = true; persist('overrides'); changed(); toast(`${M.colCode(k, 'A')} closed`, () => { delete S.overrides.reviewed[k]; persist('overrides'); changed(); }); return; }
     if (act === 'bal-close') { ui.balSheet = false; render(); return; }
     if (act === 'go-bal') { ui.balSheet = true; render(); return; }
+    if (act === 'go-recon') { location.hash = 'recon'; return; }
     if (act === 'go-cash') { const el = document.querySelector('.cb-card') || document.getElementById('recon'); if (el) el.scrollIntoView({ behavior: 'instant', block: 'start' }); return; }
     if (act === 'al-ok') { cfg.alertSeen = cfg.alertSeen || {}; cfg.alertSeen[v] = D.today; persist('model'); changed(); return; }
     if (act === 'sub-mark') { cfg.subs = cfg.subs || {}; if (cfg.subs[v] === b.dataset.m) delete cfg.subs[v]; else cfg.subs[v] = b.dataset.m; persist('model'); changed(); return; }

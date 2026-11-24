@@ -1178,3 +1178,15 @@ summary.sv-due::-webkit-details-marker { display: none; }
 
 .lf-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 8px 0 4px; }
 .lf-row > .sel { width: 100%; min-width: 0; }
+
+/* Reconcile on Wealth: one block per group and ended cycle, accounts open */
+.rc2 { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+.rc2:first-of-type { border-top: 0; }
+.rc2-h { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.rc2-h > div:first-child { flex: 1 1 260px; }
+.rc2-d { display: flex; flex-direction: column; align-items: flex-end; font-variant-numeric: tabular-nums; }
+.rc2-d b { font-size: 17px; }
+.rc2-t tfoot th, .rc2-t tfoot td { font-weight: 600; border-bottom: 0; }
+.rc2-t .rc2-src td { color: var(--ink-3); font-size: 12px; padding-top: 0; white-space: normal; text-align: left; }
+.rc2-t tbody tr:not(.rc2-src) th, .rc2-t tbody tr:not(.rc2-src) td { border-bottom: 0; }
+.w-tc { display: block; font-weight: 400; font-size: 11px; }

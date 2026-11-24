@@ -170,6 +170,8 @@
     if (t.cat0) return t.cat0; // category given when the statement was imported (e.g. Revolut lines sorted when imported)
     let c = classify(t, userRules);
     if (c === 'Salary' && t.amt > 6000) c = 'Bonus';
+    // a Livret A or LDDS at SG only ever pays to and from the SG current account: the same words on a Revolut or Trade Republic line are a move between your current accounts
+    if ((c === 'Livret A' || c === 'LDDS') && t.acct && !String(t.acct).startsWith('SG')) c = 'Between my accounts';
     return c;
   }
   // a keyword the person can turn into a rule, taken from the line
@@ -200,6 +202,12 @@
     cutoff = cutoff || 23;
     const prev = addMonths(key, -1);
     return { from: `${prev}-${pad(cutoff)}`, to: `${key}-${pad(cutoff - 1)}` };
+  }
+  // a bank statement that stops on a Friday or Saturday still covers a cycle ending that weekend: banks post nothing on Saturdays and Sundays
+  function covers(to, end) {
+    if (!to || !end) return false; if (to >= end) return true;
+    for (let t = Date.parse(to + 'T12:00:00Z') + 864e5; t <= Date.parse(end + 'T12:00:00Z'); t += 864e5) { const wd = new Date(t).getUTCDay(); if (wd !== 0 && wd !== 6) return false; }
+    return true;
   }
 
   // ---------- state → enriched transactions ----------
@@ -595,7 +603,7 @@
   const cumul = (a, upTo) => { let s = 0; return a.map((v, i) => (upTo != null && i > upTo ? null : (s += v))); };
   // the median of several running totals, day by day (a curve shorter than len keeps its last value)
   const medCurve = (curves, len) => Array.from({ length: len }, (_, i) => (curves.length ? median(curves.map((c) => c[Math.min(i, c.length - 1)])) : null));
-  const Core = { setBucket6, dayIdx, dayAdd, dayArr, flexDays, cumul, medCurve, savingsHistory, netPay, netPayCalc, effRecurring, monthlyEq, recurringPart, planBills, planCosts, defaults, mergeSettings, fixedEverydayBudget, parseCSV, csvToTx, CATS, GROUPS, RULES, TOPUPS, catGroup, classify, categorise, suggestKeyword, merchant, budgetMonth, monthRange, allTransactions, monthSummary, detectRecurring, incomeTax, bareme, marginalRate, budgetFor, addMonths, ymKey, monthLabel, BUCKET6, BUCKET6_OF, bucket6Of, statement, bridge, daysAway, usualMonth, planSeed, spendingSplit, WATCH_DEFAULT, watched, ratios, metrics, subsChange, paulOwed, median, fmtDate, titleCase, r2, sum, hash, MONTHS };
+  const Core = { setBucket6, dayIdx, dayAdd, dayArr, flexDays, cumul, medCurve, savingsHistory, netPay, netPayCalc, effRecurring, monthlyEq, recurringPart, planBills, planCosts, defaults, mergeSettings, fixedEverydayBudget, parseCSV, csvToTx, CATS, GROUPS, RULES, TOPUPS, catGroup, classify, categorise, suggestKeyword, merchant, budgetMonth, monthRange, covers, allTransactions, monthSummary, detectRecurring, incomeTax, bareme, marginalRate, budgetFor, addMonths, ymKey, monthLabel, BUCKET6, BUCKET6_OF, bucket6Of, statement, bridge, daysAway, usualMonth, planSeed, spendingSplit, WATCH_DEFAULT, watched, ratios, metrics, subsChange, paulOwed, median, fmtDate, titleCase, r2, sum, hash, MONTHS };
   if (typeof module !== 'undefined' && module.exports) module.exports = Core; else root.Core = Core;
 })(typeof window !== 'undefined' ? window : globalThis);
 

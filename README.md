@@ -86,6 +86,18 @@ date,account,amount,description,currency,balance,category,id
 - **Transfers** between your own accounts are filed as "Between my accounts" by the rules.
 - **Balance check:** the file's last balance minus its lines must equal the previous statement's closing. A gap is shown before you save.
 
+### Closing a cycle
+
+A cycle runs from the 23rd to the 22nd and is named by its end month (Nov26 = 23 Oct to 22 Nov). From the 23rd, the app is in the next cycle (Dec26C) and Nov26 waits to be closed on **Update**:
+
+1. **Add statements ending 22 Nov** for SG, Revolut and Trade Republic, cut at the 22nd. An SG statement that stops on the Friday or Saturday before a weekend 22nd counts (banks post nothing at weekends).
+2. **Every line has a category.**
+3. **Reconcile balances** (Wealth > Reconcile): each account's balance at the previous cycle end plus its own lines must give its statement balance at this cycle end. Fix a gap on one account (a missing or wrong line), then book what is left (cents, interest) with **Book**.
+4. **Type your balances** (PEA and the other market values).
+5. **Close Nov26A.** Once a cycle has ended it shows as an actual column on Wealth and Over time; until you close it, its Wealth header says "to close".
+
+The current cycle (Dec26C) is not reconciled: it shows the balances you typed today and is checked once it ends.
+
 The bank-specific readers still work: Trade Republic export (cash and PEA), Revolut consolidated statement, SG CSV, plus a column matcher for anything else.
 
 ## Apple Pay log
@@ -122,6 +134,15 @@ create policy "own rows" on public.ledger_kv
 The app then saves every change to Supabase and reloads changes from other devices each time you come back to it. If two devices edit the same thing at once, the last save wins.
 
 **Another backend:** write an object with `init`, `get`, `set`, `list` and `remove` in `storage.js`, and pick it in the `Store` line at the bottom. No page needs to change.
+
+## Changes in v11.2
+
+- The current cycle follows the pay cycle: from the 23rd, Nov26 has ended and moves to the actual columns on Wealth and Over time; Dec26C is the current column.
+- An SG statement that stops on a weekend before the 22nd now covers the cycle (it blocked Nov26, whose statement ends on Saturday 21 Nov).
+- Wealth actual columns take each account's balance at the cycle end from its statements first (before check-ins typed during the month); Livret A and LDDS from the SG transfers; an account whose first file starts later counts as not open yet.
+- Reconcile on Wealth: only ended cycles, one open table per group with each account's start, lines, expected and statement balance, the source of each figure, and the part of the difference no account explains.
+- Close step 3 is that Reconcile; its button opens it.
+- A Revolut or Trade Republic line from "M. Charbel Alhelou" is a move between current accounts, not Livret A (a Livret A at SG only pays to the SG current account).
 
 ## Removed in this version
 

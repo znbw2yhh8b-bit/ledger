@@ -1,7 +1,8 @@
 'use strict';
   // ---------- shared helpers for Over time and Month tables (the page itself is in app-overtime.js) ----------
   const TM_B = [['home', 'Home and bills'], ['everyday', 'Everyday'], ['lifestyle', 'Lifestyle'], ['family', 'Family'], ['trips', 'Trips'], ['tax', 'Tax']];
-  const tmThis = () => D.today.slice(0, 7);
+  // the cycle today falls in (pay cycle, not calendar month): from the 23rd, today belongs to the next month's cycle
+  const tmThis = () => C.budgetMonth(D.today, S.cfg.cutoff);
   const tmZero = () => ({ in: { spendable: 0, bonus: 0, direct: 0, total: 0 }, cost: { home: 0, everyday: 0, lifestyle: 0, family: 0, trips: 0, tax: 0, total: 0 }, left: 0, w: { cur: 0, la: 0, ld: 0, pea: 0, locked: 0, other: 0, direct: 0, total: 0 }, ret: 0, nw: null });
   // a closed month, or the open month so far, from the statement
   function tmFromStmt(k) {

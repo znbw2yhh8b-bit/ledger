@@ -5,11 +5,16 @@
     const todo = D.txs.filter((t) => t.month === key && t.cat === 'To classify').length;
     const stale = cfg.accounts.filter((a) => ['cash', 'savings', 'invest', 'locked'].includes(a.tier) && (a.asOf || '') < r.to && +a.balance !== 0);
     const snap = D.snaps.some(([d]) => d >= r.to);
-    const b = D.pl[key] ? cashBridge(key) : null; const can = !!(b && b.diff != null); const recOk = can && Math.abs(b.diff) < 0.01;
+    // step 3 is the Reconcile card on Wealth for this cycle: current accounts, Livret A and LDDS at the cycle end against the statements, after what you booked
+    let wc = null; try { wc = wActCols().find((c) => c.key === key && c.kind === 'A') || null; } catch (e) { wc = null; }
+    const wLab = { cash: 'Current accounts', la: 'Livret A', ld: 'LDDS' };
+    const wCan = !!(wc && wc.s && W_BOOK.every((g) => wc.s[g] != null)); const wOpen = wCan ? W_BOOK.filter((g) => wc.open[g] != null && Math.abs(wc.open[g]) >= W_TOL) : [];
+    const wOk = wCan && !wOpen.length;
+    const wNote = !wc ? 'Needs the statements' : !wCan ? 'A balance at the cycle end is unknown' : wOk ? 'Every balance ties to the statements at the cycle end' : wOpen.map((g) => `${wLab[g]} ${wc.open[g] < 0 ? '−' : '+'}${Math.abs(wc.open[g]).toFixed(2)} €`).join(', ') + ' to fix or book on Wealth';
     const steps = [
-      { id: 'stm', title: `Add statements ending ${fmtDate(r.to)}`, ok: !!D.sgTo && D.sgTo >= r.to, act: 'pick', note: 'The Ledger CSV template, or an SG, Revolut or Trade Republic CSV' },
+      { id: 'stm', title: `Add statements ending ${fmtDate(r.to)}`, ok: C.covers(D.sgTo, r.to), act: 'pick', note: 'The Ledger CSV template, or an SG, Revolut or Trade Republic CSV' },
       { id: 'cls', title: todo ? `Classify ${todo} line${todo > 1 ? 's' : ''}` : 'Every line has a category', ok: todo === 0 && !!D.pl[key], act: 'go-todo' },
-      { id: 'rec', title: 'Reconcile cash', ok: recOk, act: 'go-cash', optional: !can, note: !b ? 'Needs the statement' : !can ? 'No statement balance covers this cycle' : recOk ? 'Each account ties to its statement' : `Gap of ${eur(Math.abs(b.diff), 2)}` },
+      { id: 'rec', title: 'Reconcile balances', ok: wOk, act: 'go-recon', optional: !wCan, note: wNote },
       { id: 'bal', title: 'Type your balances', ok: stale.length === 0 && snap, act: 'go-bal', note: stale.length ? `To check: ${stale.map((a) => a.name.replace(/ ••\d+/, '')).join(', ')}` : snap ? `Net worth recorded ${fmtDate(D.snaps[D.snaps.length - 1][0])}` : 'One figure per account, PEA value included' },
       { id: 'exp', title: 'Export a backup to iCloud Drive', ok: (S.cfg.lastExport || '') >= r.to, act: 'backup', optional: true, note: S.cfg.lastExport ? `Last export ${fmtDate(S.cfg.lastExport)}` : 'No export yet' },
       { id: 'close', title: `Close ${M.colCode(key, 'A')}`, ok: !!(S.overrides.reviewed || {})[key], act: 'close-go', note: 'Needs steps 1 to 4' },
@@ -127,7 +132,7 @@
     return `
     <section class="card"><div class="card-h"><h2>Close ${ML(cl.key, true)}</h2><span class="muted sm">${cl.done} of ${cl.total} steps done</span></div>
       <div class="goal-bar"><i style="width:${(cl.done / cl.total * 100).toFixed(0)}%"></i></div>
-      <ol class="steps">${cl.steps.map((st, i) => `<li class="${st.ok ? 'ok' : ''}"><span class="st-ic" aria-hidden="true">${st.ok ? icon('check') : i + 1}</span><div class="grow"><b>${esc(st.title)}</b>${st.optional ? ' <span class="tag tag-m">optional</span>' : ''}<div class="sm"><span class="${st.ok ? 'ok' : 'muted'}">${st.ok ? 'Done' : 'To do'}</span>${st.note ? `<span class="muted"> · ${esc(st.note)}</span>` : ''}</div></div>${st.ok ? '' : `<button class="btn-sm" data-act="${st.act}" ${st.act === 'close-go' && cl.steps.some((x) => x.id !== 'close' && !x.optional && !x.ok) ? 'disabled' : ''}>${{ pick: 'Choose file', backup: 'Export', 'go-todo': 'Classify', 'close-go': 'Close cycle', 'go-bal': 'Type balances', 'go-cash': 'See the check' }[st.act]}</button>`}</li>`).join('')}</ol>
+      <ol class="steps">${cl.steps.map((st, i) => `<li class="${st.ok ? 'ok' : ''}"><span class="st-ic" aria-hidden="true">${st.ok ? icon('check') : i + 1}</span><div class="grow"><b>${esc(st.title)}</b>${st.optional ? ' <span class="tag tag-m">optional</span>' : ''}<div class="sm"><span class="${st.ok ? 'ok' : 'muted'}">${st.ok ? 'Done' : 'To do'}</span>${st.note ? `<span class="muted"> · ${esc(st.note)}</span>` : ''}</div></div>${st.ok ? '' : `<button class="btn-sm" data-act="${st.act}" ${st.act === 'close-go' && cl.steps.some((x) => x.id !== 'close' && !x.optional && !x.ok) ? 'disabled' : ''}>${{ pick: 'Choose file', backup: 'Export', 'go-todo': 'Classify', 'close-go': 'Close cycle', 'go-bal': 'Type balances', 'go-cash': 'See the check', 'go-recon': 'Open Reconcile' }[st.act]}</button>`}</li>`).join('')}</ol>
     </section>
     <section class="card"><div class="card-h"><h2>Add documents</h2></div>
       <label class="drop" id="drop" for="file-in">${icon('import', 'lg')}<div><b>Choose CSV files</b><div class="muted sm">SG, Revolut or Trade Republic CSV, or a CSV from your bank</div></div></label>

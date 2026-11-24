@@ -8,9 +8,6 @@
   function wBal(pt) { const o = {}; WG.forEach(([k]) => { o[k] = null; }); let any = false;
     S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const v = pt ? pt[a.key] : +a.balance || 0; if (v == null) return; o[g] = (o[g] || 0) + +v; any = true; });
     if (!any) return null; o.total = pt && pt.nw != null ? +pt.nw : C.sum(WG, ([k]) => o[k] || 0); return o; }
-  // an account's balance at a past cycle end when no check-in was made then. Sources, in order:
-  // 1 a statement covering that day (its closing less the lines after the day); 2 for the Livret A, the nearest known balance before it plus the transfers since;
-  // 3 the automatic statement balances (snapshots.auto); 4 a past balance you typed on the account (a.past = { bal, until: last cycle it applies to }). Unknown stays blank.
   const wStKey = (st) => st.acctKey || ({ REV: 'rev', TR: 'tr' })[st.account] || (String(st.account).startsWith('SG') && st.role !== 'savings' ? 'sg' : null);
   function wLaAt(end) {
     const an = []; Object.values(S.stmts || {}).filter((x) => x.acctKey === 'la').forEach((x) => { if (x.closing != null) an.push([x.to, +x.closing]); (x.checkpoints || []).forEach((c) => an.push([c.date, +c.bal])); });
@@ -18,20 +15,39 @@
     const ex = an.find((a) => a[0] === end); if (ex) return ex[1]; const before = an.filter((a) => a[0] < end).sort((p, q) => p[0].localeCompare(q[0])).pop(); if (!before) return null;
     return C.r2(before[1] + C.sum(D.txs.filter((t) => t.cat === 'Livret A' && t.date > before[0] && t.date <= end), (t) => -t.amt));
   }
-  function wAcctAt(a, end, k) {
-    const st = Object.values(S.stmts || {}).filter((x) => x.closing != null && wStKey(x) === a.key && x.from <= end && x.to >= end).sort((p, q) => q.to.localeCompare(p.to))[0];
-    if (st) return C.r2(st.closing - C.sum((st.tx || []).filter((t) => t.date > end), (t) => +t.amt || 0));
-    if (a.key === 'la') { const v = wLaAt(end); if (v != null) return v; }
-    const au = ((S.snapshots || {}).auto || {})[end]; if (au && au[a.key] != null) return +au[a.key];
-    if (a.past && k <= a.past.until) return +a.past.bal || 0;
-    return null;
+  // ---------- an account's balance at a cycle end, and where it came from ----------
+  // Statements come first for current accounts, Livret A and LDDS: the latest file with a closing balance that starts on or before the day,
+  // less its lines after the day, or plus the account's later lines up to the day when the file stops before it (a weekend, a file that ends on its last line).
+  // Then, for every account: the last check-in typed inside the cycle, the automatic balances recorded at a close, a past balance typed on the account.
+  function wStmtAt(a, end) {
+    const own = Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key && x.closing != null && x.from <= end); if (!own.length) return null;
+    const st = own.sort((p, q) => q.to.localeCompare(p.to))[0];
+    if (st.to >= end) { const after = (st.tx || []).filter((t) => t.date > end); return { v: C.r2(st.closing - C.sum(after, (t) => +t.amt || 0)), how: `statement to ${fmtDate(st.to)}${after.length ? `, less ${after.length} line${after.length > 1 ? 's' : ''} after ${fmtDate(end)}` : ''}`, st: true }; }
+    // the file stops before the day: carry it forward only when nothing can be missing in between (a weekend, or a later file of the account that reaches the day)
+    const reach = C.covers(st.to, end) || Object.values(S.stmts || {}).some((x) => wStKey(x) === a.key && x.from <= C.dayAdd(st.to, 1) && x.to >= end);
+    if (!reach) return null;
+    const later = wAcctLines(a, st.to, end);
+    return { v: C.r2(st.closing + C.sum(later, (t) => +t.amt || 0)), how: `statement to ${fmtDate(st.to)}${later.length ? `, plus ${later.length} later line${later.length > 1 ? 's' : ''}` : ''}`, st: true };
   }
-  // balances by row at a past cycle end; a row (and the total) stays blank when one of its accounts is unknown
-  function wHistBal(end, k) {
-    const o = {}; WG.forEach(([k]) => { o[k] = 0; }); const miss = new Set(); let any = false;
-    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const v = wAcctAt(a, end, k);
+  function wSrcAt(a, end, k) {
+    const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
+    if (book) { const x = wStmtAt(a, end); if (x) return x; if (a.key === 'la') { const v = wLaAt(end); if (v != null) return { v, how: 'Livret A: last known balance plus the transfers since' }; } }
+    const pts = (S.snapshots && S.snapshots.points) || {}; const R = C.monthRange(k, S.cfg.cutoff);
+    const d = Object.keys(pts).filter((x) => x > R.from && x <= end && pts[x] && pts[x][a.key] != null).sort().pop();
+    if (d) return { v: +pts[d][a.key], how: 'check-in ' + fmtDate(d) + (d !== end ? ' (before the cycle end)' : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') };
+    const au = ((S.snapshots || {}).auto || {})[end]; if (au && au[a.key] != null) return { v: +au[a.key], how: 'balance recorded at the close' };
+    if (a.past && k <= a.past.until) return { v: +a.past.bal || 0, how: 'past balance typed on the account' };
+    // an account whose first file starts after the day, opening at about zero: it was not open yet
+    const first = Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key).sort((p, q) => p.from.localeCompare(q.from))[0];
+    if (first && first.from > end) { const op = first.opening != null ? +first.opening : first.closing != null ? first.closing - C.sum(first.tx || [], (t) => +t.amt || 0) : null; if (op != null && Math.abs(op) < 5) return { v: 0, how: 'not open yet (first file from ' + fmtDate(first.from) + ')' }; }
+    return { v: null, how: 'no statement or check-in for ' + fmtDate(end) };
+  }
+  // balances by row at a cycle end; a row (and the total) stays blank when one of its accounts with money in it is unknown
+  function wSrcBal(end, k) {
+    const o = {}; WG.forEach(([g]) => { o[g] = 0; }); const miss = new Set(); let any = false;
+    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const v = wSrcAt(a, end, k).v;
       if (v == null) { if (Math.abs(+a.balance || 0) >= 0.5) miss.add(g); return; } o[g] += v; any = true; });
-    if (!any) return null; miss.forEach((g) => { o[g] = null; }); o.total = miss.size ? null : C.sum(WG, ([k]) => o[k] || 0); o.est = true; return o;
+    if (!any) return null; miss.forEach((g) => { o[g] = null; }); o.total = miss.size ? null : C.sum(WG, ([g]) => o[g] || 0); return o;
   }
   const W_START = '2026-05'; // Wealth history starts with the May26 cycle
   // ---------- balances by roll-forward ----------
@@ -43,8 +59,10 @@
   const W_BOOK = ['cash', 'la', 'ld']; const W_TOL = 1;
   function wActCols() {
     const th = tmThis(); const pts = (S.snapshots && S.snapshots.points) || {}; const cols = []; const book = (S.overrides && S.overrides.recon) || {};
-    D.complete.filter((k) => k >= W_START && k < th).forEach((k) => { const R = C.monthRange(k, S.cfg.cutoff); const d = Object.keys(pts).filter((x) => x <= R.to && x > R.from).sort().pop();
-      cols.push({ key: k, h: otCode(k, 'A'), kind: 'A', s: d ? wBal(pts[d]) : wHistBal(R.to, k), col: tmFromStmt(k), raw: M.colFromStatement(stmtOf(k), k, 'A', D.txs) }); });
+    // every cycle that has ended shows as an actual column; one not yet closed on Update stays faded ("to close") until you close it
+    const rv = (S.overrides && S.overrides.reviewed) || {}; const lastRv = Object.keys(rv).filter((x) => rv[x]).sort().pop() || '';
+    D.keys.filter((k) => k >= W_START && k < th).forEach((k) => { const R = C.monthRange(k, S.cfg.cutoff); const done = D.complete.includes(k);
+      cols.push({ key: k, h: otCode(k, 'A'), kind: 'A', s: wSrcBal(R.to, k), col: tmFromStmt(k), raw: M.colFromStatement(stmtOf(k), k, done ? 'A' : 'C', D.txs), toClose: !rv[k] && k > lastRv }); });
     cols.push({ key: th, h: otCode(th, 'C'), kind: 'C', s: wBal(null), cls: 'tm-now', raw: M.colFromStatement(stmtOf(th), th, 'C', D.txs), est: true });
     cols.forEach((c, i) => { const p = cols[i - 1]; const src = c.s || {}; c.paid = {}; WG.forEach(([k]) => { c.paid[k] = k === 'dep' ? 0 : +(c.raw.assets[k] || 0); });
       c.b = {}; c.roll = {}; c.diff = {}; c.gain = {}; c.open = {}; c.estK = {}; const bk = book[c.key] || {};
@@ -53,9 +71,10 @@
         const roll = p.b[k] + c.paid[k]; c.roll[k] = roll; const d = sv == null ? null : sv - roll; c.diff[k] = d;
         if (!W_BOOK.includes(k)) { c.gain[k] = d == null ? 0 : d; if (d == null && Math.abs(roll) >= 0.5) c.estK[k] = true; }
         else { const bv = bk[k] != null ? +bk[k] : 0; c.gain[k] = bv; c.open[k] = d == null ? null : Math.abs(d - bv) >= W_TOL ? d - bv : 0; }
-        c.b[k] = roll + c.gain[k]; });
+        // the current cycle is still moving: it shows today's balances where you typed them; the rolled figure waits for the cycle end
+        c.b[k] = c.kind === 'C' && sv != null ? sv : roll + c.gain[k]; });
       c.b.total = C.sum(WG, ([k]) => c.b[k] || 0); c.paid.total = C.sum(WG, ([k]) => c.paid[k] || 0); c.gain.total = p ? C.sum(WG, ([k]) => c.gain[k] || 0) : null;
-      c.est = c.kind === 'C' || Object.keys(c.estK).length > 0; });
+      c.est = c.kind === 'C' || !!c.toClose || Object.keys(c.estK).length > 0; });
     return cols;
   }
   function wCols() {
@@ -64,38 +83,51 @@
     return cols;
   }
   // one account between two cycle ends, for the Reconcile detail: its balance at each end and where it came from, and its own statement lines between the two dates
-  function wAcctSrc(a, end, k) { const pts = (S.snapshots && S.snapshots.points) || {}; const R = C.monthRange(k, S.cfg.cutoff); const d = Object.keys(pts).filter((x) => x <= R.to && x > R.from).sort().pop();
-    if (d && pts[d][a.key] != null) return { v: +pts[d][a.key], how: 'check-in ' + fmtDate(d) + (d !== end ? ' (not the cycle end)' : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') };
-    const st = Object.values(S.stmts || {}).filter((x) => x.closing != null && wStKey(x) === a.key && x.from <= end && x.to >= end).sort((p, q) => q.to.localeCompare(p.to))[0];
-    if (st) return { v: C.r2(st.closing - C.sum((st.tx || []).filter((t) => t.date > end), (t) => +t.amt || 0)), how: 'statement to ' + fmtDate(st.to) + ', less lines after ' + fmtDate(end) };
-    const v = wAcctAt(a, end, k); return v == null ? { v: null, how: 'no statement covers ' + fmtDate(end) } : { v, how: 'automatic or typed past balance' }; }
   function wAcctLines(a, from, to) { const m = new Map(); Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key).forEach((x) => (x.tx || []).forEach((t) => { if (t.date > from && t.date <= to) m.set(t.id || t.date + t.amt + t.desc, t); })); return [...m.values()]; }
-  function reconDetail(c, k, prevKey) {
-    if (!prevKey) return ''; const e0 = C.monthRange(prevKey, S.cfg.cutoff).to, e1 = c.kind === 'C' ? D.today : C.monthRange(c.key, S.cfg.cutoff).to;
-    const accs = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && wGroupOf(a) === k);
-    const rows = accs.map((a) => { const s0 = wAcctSrc(a, e0, prevKey), s1 = c.kind === 'C' ? { v: +a.balance || 0, how: 'balance today' + (a.asOf ? ' (as of ' + fmtDate(a.asOf) + ')' : '') } : wAcctSrc(a, e1, c.key); const ls = wAcctLines(a, e0, e1); const mv = C.sum(ls, (t) => +t.amt || 0);
-      const fx = C.sum(ls.filter((t) => /Exchange rate effect/.test(t.desc || '')), (t) => +t.amt || 0); const exp = s0.v == null ? null : s0.v + mv; const d = exp == null || s1.v == null ? null : s1.v - exp;
-      return `<tr><th scope="row" class="tm-l">${esc(a.name.replace(/\s*••\d+/, ''))}${isUsd(a) ? ' <span class="muted">USD</span>' : ''}</th><td class="num">${tmNum(s0.v)}</td><td class="num">${tmNum(mv)}${Math.abs(fx) >= 0.5 ? `<small>FX ${tmNum(fx)}</small>` : ''}</td><td class="num">${tmNum(s1.v)}</td><td class="num">${tmNum(d, true)}</td></tr><tr class="muted sm"><td colspan="5">${esc(fmtDate(e0))}: ${esc(s0.how)} · ${esc(fmtDate(e1))}: ${esc(s1.how)} · ${ls.length} lines</td></tr>`; }).join('');
-    return `<details class="w-rd"><summary class="sm">By account, ${esc(fmtDate(e0))} → ${esc(fmtDate(e1))}</summary><div class="tm-w"><table class="tm-t ot-t"><thead><tr><th class="tm-l">Account</th><th class="num">Start</th><th class="num">Its lines</th><th class="num">End</th><th class="num">Gap</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p class="muted sm">Gap ≠ 0 on one account: a line missing from its statement or the balance taken on another day. All gaps 0 but a difference above: a move between these accounts and another group (savings, investments) that the plan does not see, or a cost in "Between my accounts".</p></details>`;
+  // reconciliation figures keep the cents: brackets for a negative, a dash for zero
+  const rcN = (v) => (v == null ? '<span class="muted">–</span>' : Math.abs(v) < 0.005 ? '<span class="muted">–</span>' : (v < 0 ? '(' : '') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + (v < 0 ? ')' : ''));
+  // an account's own moves between two days: its statement lines; for a Livret A or LDDS with no statement of its own over the days, the SG transfers to and from it
+  function wMoves(a, from, to) {
+    const own = Object.values(S.stmts || {}).some((x) => wStKey(x) === a.key && x.from <= C.dayAdd(from, 1) && C.covers(x.to, to));
+    const cat = { la: 'Livret A', ld: 'LDDS' }[a.key];
+    if (cat && !own) { const ls = D.txs.filter((t) => t.cat === cat && String(t.acct).startsWith('SG') && t.date > from && t.date <= to); return { n: ls.length, v: -C.sum(ls, (t) => +t.amt || 0), how: 'SG transfers' }; }
+    // an own account with no files here (Fortuneo): the SG transfers sent to it
+    if (!Object.values(S.stmts || {}).some((x) => wStKey(x) === a.key)) { const ls = D.txs.filter((t) => t.toOwn === a.key && t.date > from && t.date <= to); return { n: ls.length, v: -C.sum(ls, (t) => +t.amt || 0), how: 'SG transfers' }; }
+    const ls = wAcctLines(a, from, to); return { n: ls.length, v: C.sum(ls, (t) => +t.amt || 0), fx: C.sum(ls.filter((t) => /Exchange rate effect/.test(t.desc || '')), (t) => +t.amt || 0), how: 'statement lines' };
   }
-  // open differences on current accounts, Livret A and LDDS: rolled balance vs the statement / check-in, with a button to book each one
+  // one group (current accounts, Livret A, LDDS) for one ended cycle: each account from the previous cycle end to this one
+  function reconBlock(c, k, prevKey, o) {
+    const lab = (WG.find((g) => g[0] === k) || [0, k])[1]; const e0 = C.monthRange(prevKey, S.cfg.cutoff).to, e1 = C.monthRange(c.key, S.cfg.cutoff).to;
+    const accs = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && wGroupOf(a) === k);
+    const R = accs.map((a) => { const s0 = wSrcAt(a, e0, prevKey), s1 = wSrcAt(a, e1, c.key), mv = wMoves(a, e0, e1); const exp = s0.v == null ? null : C.r2(s0.v + mv.v); const gap = exp == null || s1.v == null ? null : C.r2(s1.v - exp); return { a, s0, s1, mv, exp, gap }; })
+      .filter((r) => r.mv.n || Math.abs(r.s0.v || 0) >= 0.005 || Math.abs(r.s1.v || 0) >= 0.005);
+    const tot = (f) => (R.some((r) => r[f] == null) ? null : C.r2(C.sum(R, (r) => r[f])));
+    const t0 = R.some((r) => r.s0.v == null) ? null : C.r2(C.sum(R, (r) => r.s0.v)), t1 = R.some((r) => r.s1.v == null) ? null : C.r2(C.sum(R, (r) => r.s1.v)); const tg = tot('gap');
+    const rest = tg == null ? null : C.r2(o - tg);
+    const rows = R.map((r) => `<tr><th scope="row" class="tm-l">${esc(r.a.name.replace(/\s*••\d+/, ''))}${isUsd(r.a) ? ' <span class="muted">USD</span>' : ''}</th><td class="num">${rcN(r.s0.v)}</td><td class="num">${rcN(r.mv.v)}<small class="muted"> ${r.mv.n}</small></td><td class="num">${rcN(r.exp)}</td><td class="num">${rcN(r.s1.v)}</td><td class="num ${r.gap != null && Math.abs(r.gap) >= 0.01 ? 'rc-bad-t' : ''}">${r.gap != null && Math.abs(r.gap) < 0.01 ? `<span class="rc-ok">${icon('check', 'sm')}</span>` : rcN(r.gap)}</td></tr>
+      <tr class="rc2-src"><td colspan="6">${esc(fmtDate(e0))}: ${esc(r.s0.how)} · ${esc(fmtDate(e1))}: ${esc(r.s1.how)} · ${r.mv.n} ${esc(r.mv.how)}</td></tr>`).join('');
+    const why = rest != null && Math.abs(rest) >= 1 ? `<p class="sm rc-bad-t">${rcN(rest)} of the difference is in no account's lines: a line filed in the wrong category (a cost or a move to savings marked "Between my accounts"), or a check-in that moved the starting balance. Fix the category before booking.</p>` : '';
+    return `<div class="rc2"><div class="rc2-h"><div><b>${esc(lab)} · ${esc(c.h)}</b><div class="muted sm">${esc(fmtDate(e0))} → ${esc(fmtDate(e1))} · rolled ${rcN(c.roll[k])} · statements ${rcN(c.s[k])}</div></div>
+      <div class="rc2-d"><span class="muted sm">Difference</span><b class="rc-bad-t">${rcN(o)}</b></div><button type="button" class="btn-sm" data-act="w-book" data-m="${c.key}" data-k="${k}" data-v="${C.r2(o)}">Book ${rcN(o)}</button></div>
+      <div class="tm-w"><table class="tm-t ot-t rc2-t"><thead><tr><th class="tm-l">Account</th><th class="num">${esc(fmtDate(e0))}</th><th class="num">Its lines</th><th class="num">Expected ${esc(fmtDate(e1))}</th><th class="num">Statement ${esc(fmtDate(e1))}</th><th class="num">Gap</th></tr></thead>
+      <tbody>${rows}</tbody><tfoot><tr class="tot"><th scope="row" class="tm-l">${esc(lab)}</th><td class="num">${rcN(t0)}</td><td class="num">${rcN(C.r2(C.sum(R, (r) => r.mv.v)))}</td><td class="num">${rcN(tot('exp'))}</td><td class="num">${rcN(t1)}</td><td class="num">${rcN(tg)}</td></tr></tfoot></table></div>${why}</div>`;
+  }
+  // open differences on current accounts, Livret A and LDDS, for each cycle that has ended (the current cycle is still moving, so it is not checked here)
   function reconCard(cols) {
-    const items = []; cols.filter((c) => c.kind !== 'F').forEach((c) => W_BOOK.forEach((k) => { const o = c.open && c.open[k]; if (o != null && Math.abs(o) >= W_TOL) items.push({ c, k, o }); }));
-    const lab = (k) => (WG.find((g) => g[0] === k) || [0, k])[1]; const booked = (S.overrides && S.overrides.recon) || {};
-    const nb = Object.values(booked).reduce((n, x) => n + Object.keys(x || {}).length, 0);
-    const rows = items.map(({ c, k, o }) => { const i = cols.indexOf(c); const pk = i > 0 ? cols[i - 1].key : null;
-      return `<tr><th scope="row" class="tm-l">${esc(lab(k))} · ${esc(c.h)}</th><td class="num">${tmNum(c.roll[k])}</td><td class="num">${tmNum(c.s[k])}</td><td class="num">${tmNum(o, true)}</td><td><button type="button" class="btn sm" data-act="w-book" data-m="${c.key}" data-k="${k}" data-v="${C.r2(o)}">Book</button></td></tr><tr><td colspan="5">${reconDetail(c, k, pk)}</td></tr>`; }).join('');
-    return `<section class="card" id="w-recon"><div class="card-h"><h2>Reconcile</h2><span class="muted sm">Rolled balance vs statements and check-ins</span></div>
-      ${items.length ? `<div class="tm-w"><table class="tm-t ot-t"><thead><tr><th class="tm-l">Account · cycle</th><th class="num">Rolled</th><th class="num">Statement</th><th class="num">Difference</th><th></th></tr></thead><tbody>${rows}</tbody></table></div><p class="muted sm">Book a difference as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain).</p>` : '<p class="muted sm">All balances tie to the statements and check-ins.</p>'}
-      ${nb ? `<p class="sm"><button type="button" class="btn sm ghost" data-act="w-unbook">Clear ${nb} booked adjustment${nb > 1 ? 's' : ''}</button></p>` : ''}</section>`;
+    const items = []; cols.forEach((c, i) => { if (c.kind !== 'A' || i === 0) return; W_BOOK.forEach((k) => { const o = c.open && c.open[k]; if (o != null && Math.abs(o) >= W_TOL) items.push({ c, k, o, pk: cols[i - 1].key }); }); });
+    const booked = (S.overrides && S.overrides.recon) || {}; const nb = Object.values(booked).reduce((n, x) => n + Object.keys(x || {}).length, 0);
+    const last = cols.filter((c) => c.kind === 'A').pop();
+    return `<section class="card" id="w-recon"><div class="card-h"><h2>Reconcile</h2><span class="muted sm">At each cycle end, against the statements</span></div>
+      ${items.length ? items.map(({ c, k, o, pk }) => reconBlock(c, k, pk, o)).join('') + `<p class="muted sm">Each account: its balance at the previous cycle end, plus its own lines, should give the statement balance at this cycle end. A gap on one account means a line is missing or wrong in its file. Book what is left as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain). Today's balances are checked when the cycle ends.</p>`
+        : `<p class="sm"><span class="rc-ok">${icon('check', 'sm')}</span> Every balance ties to the statements${last ? ` up to ${esc(fmtDate(C.monthRange(last.key, S.cfg.cutoff).to))}` : ''}.</p>`}
+      ${nb ? `<p class="sm"><button type="button" class="btn-ghost" data-act="w-unbook">Clear ${nb} booked adjustment${nb > 1 ? 's' : ''}</button></p>` : ''}</section>`;
   }
   document.addEventListener('click', (ev) => { const b = ev.target.closest('[data-act="w-book"],[data-act="w-unbook"]'); if (!b) return; S.overrides.recon = S.overrides.recon || {};
     if (b.dataset.act === 'w-unbook') { const old = S.overrides.recon; S.overrides.recon = {}; persist('overrides'); changed(); toast('Adjustments cleared', () => { S.overrides.recon = old; persist('overrides'); changed(); }); return; }
     const m = b.dataset.m, k = b.dataset.k, v = +b.dataset.v; const r = (S.overrides.recon[m] = S.overrides.recon[m] || {}); r[k] = C.r2((+r[k] || 0) + v); persist('overrides'); changed(); toast('Booked ' + eur(v, 2)); });
   const wN = (v, tot) => (v == null ? '' : tmNum(v, tot));
   function wTable(cols, rows) {
-    const head = `<tr><th scope="col" class="tm-l">EUR</th>${cols.map((c) => `<th scope="col" class="num ${c.cls || ''}">${c.kind === 'A' ? `<button type="button" class="tm-hb" data-act="tm-month" data-m="${c.key}">${esc(c.h)}</button>` : esc(c.h)}</th>`).join('')}</tr>`;
+    const head = `<tr><th scope="col" class="tm-l">EUR</th>${cols.map((c) => `<th scope="col" class="num ${c.cls || ''}">${c.kind === 'A' ? `<button type="button" class="tm-hb" data-act="tm-month" data-m="${c.key}">${esc(c.h)}</button>${c.toClose ? '<small class="muted w-tc">to close</small>' : ''}` : esc(c.h)}</th>`).join('')}</tr>`;
     const body = rows.map(([lab, get, cls]) => (get === 'h' ? `<tr class="tm-g"><th scope="rowgroup" class="tm-l">${lab}</th><td colspan="${cols.length}"></td></tr>` : `<tr class="${cls || ''}"><th scope="row" class="tm-l">${esc(lab)}</th>${cols.map((c) => `<td class="num ${c.cls || ''}">${wN(get(c), cls === 'tot')}</td>`).join('')}</tr>`)).join('');
     return `<div class="tm-w ot-w w-w"><table class="tm-t ot-t"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }

@@ -44,7 +44,7 @@
   ICON.assump = ICON.setup; Object.assign(ICON, { cash: 'M4 4v16h16 M8 14l3-3 3 2 4-5', hold: 'M12 3a9 9 0 1 0 9 9 M12 3v9h9 M15 3.5A9 9 0 0 1 20.5 9H15z', setup: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 2v3 M12 19v3 M2 12h3 M19 12h3 M4.9 4.9l2.1 2.1 M17 17l2.1 2.1 M4.9 19.1L7 17 M17 7l2.1-2.1' });
   // seven pages in six places. Older page names (hashes, links, handlers) still work: they redirect to the page that now holds them, at the section that holds them.
   const VIEWS = [['report', 'Month'], ['time', 'Over time'], ['worth', 'Wealth'], ['assume', 'Assumptions'], ['update', 'Update'], ['setup', 'Settings']];
-  const ALIAS = { now: ['report', null], bills: ['report', 'steer'], lines: ['report', 'transactions'], cash: ['time', 'sec-chart'], forecast: ['time', 'sec-chart'], 'plan-years': ['time', 'sec-table'], 'plan-inputs': ['assume', null], hold: ['worth', null], holdings: ['worth', null], close: ['update', 'closelist'] };
+  const ALIAS = { now: ['report', null], bills: ['report', 'steer'], lines: ['report', 'transactions'], cash: ['time', 'sec-chart'], forecast: ['time', 'sec-chart'], 'plan-years': ['time', 'sec-table'], 'plan-inputs': ['assume', null], hold: ['worth', null], holdings: ['worth', null], close: ['update', 'closelist'], recon: ['worth', 'w-recon'] };
   const resolveView = (h) => { const k = String(h || '').replace(/^#/, ''); if (k === 'now' || k === 'bills') ui.month = null; /* Today is Month on the current cycle */ if (VIEWS.some(([v]) => v === k)) return { view: k, sect: null }; return ALIAS[k] ? { view: ALIAS[k][0], sect: ALIAS[k][1] } : null; };
   const BL = Object.fromEntries(M.BUCKETS);
   const TIERS = [['cash', 'Cash'], ['savings', 'Savings'], ['invest', 'Invested'], ['locked', 'Locked (PEE, PERCOL)'], ['other', 'Other assets'], ['receivable', 'Owed to you (not in net worth)']];
@@ -160,7 +160,7 @@
     C.setBucket6(cfg.bucket6);
     const txs0 = C.allTransactions({ stmts: S.stmts, settings: { cutoff: cfg.cutoff }, rules: S.rules, overrides: S.overrides });
     const sgTo = Object.values(S.stmts).filter((x) => String(x.account).startsWith('SG') && x.role !== 'savings').map((x) => x.to).sort().pop();
-    const isDone = (k) => sgTo && C.monthRange(k, cfg.cutoff).to <= sgTo;
+    const isDone = (k) => C.covers(sgTo, C.monthRange(k, cfg.cutoff).to);
     // Apple Pay and hand-added entries stand in for the open month until its statements arrive; closed months use statements only
     const live = liveSplit(txs0, isDone, sgTo);
     // a top-up from SG to your own Revolut or Trade Republic is a move between your accounts once that account's own
