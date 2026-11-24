@@ -146,9 +146,11 @@
       toast(`Added ${eur(e.amt, 2)} into ${(PAID_TO_F().find(([k]) => k === e.to) || [0, ''])[1]}`); ui.sheetOpen = false; render(); return;
     }
     if (f.id === 'xcheck') {
-      let n = 0; f.querySelectorAll('[data-xacct]').forEach((el) => { const val = num(el.value); if (isNaN(val)) return; const a = acct(el.dataset.xacct); if (isUsd(a)) { a.balCur = val; a.balance = fxNow() ? C.r2(val * fxNow().r) : a.balance; } else a.balance = val; a.asOf = t; n++; });
+      let n = 0; const typed = []; f.querySelectorAll('[data-xacct]').forEach((el) => { const val = num(el.value); if (isNaN(val)) return; const a = acct(el.dataset.xacct); if (isUsd(a)) { a.balCur = val; a.balance = fxNow() ? C.r2(val * fxNow().r) : a.balance; } else a.balance = val; a.asOf = t; typed.push(a.key); n++; });
       if (!n) return toast('Type at least one balance');
-      D = null; derive(); S.snapshots.points = S.snapshots.points || {}; const pt = { nw: C.r2(D.nw) }; cfg.accounts.forEach((a) => { pt[a.key] = C.r2(+a.balance || 0); }); S.snapshots.points[t] = pt;
+      D = null; derive(); S.snapshots.points = S.snapshots.points || {}; const prev = S.snapshots.points[t] || {}; const pt = { nw: C.r2(D.nw) }; cfg.accounts.forEach((a) => { pt[a.key] = C.r2(+a.balance || 0); });
+      // which accounts you typed this day, and when (a payment added later the same day then counts after the value)
+      pt._typed = [...new Set((prev._typed || []).concat(typed))]; pt._t = Date.now(); S.snapshots.points[t] = pt;
       ui.balSheet = false; persist('model'); persist('snapshots'); changed(); toast(`Saved. Net worth ${eur(D.nw)} recorded for ${fmtDate(t)}.`); return;
     }
     if (f.id === 'goal-form') {

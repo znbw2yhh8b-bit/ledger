@@ -27,24 +27,31 @@
     return { v: C.r2(st.closing + C.sum(later, (t) => +t.amt || 0)), how: `statement to ${fmtDate(st.to)}${later.length ? `, plus ${later.length} later line${later.length > 1 ? 's' : ''}` : ''}`, st: true };
   }
   // money paid into a market-valued account between two days: transfers into the PEA from the statements, Epsor payments, and the income you added on Month straight to an account (participation, abondement)
-  function wFlowIn(key, from, to) {
-    const inR = (d) => d > from && d <= to; let v = 0;
-    if (key === 'pea') v -= C.sum(D.txs.filter((t) => t.cat === 'PEA & investments' && !t.live && inR(t.date)), (t) => +t.amt || 0);
+  // opt.fromT / opt.toT: the window starts / ends at a value you typed that day (its time, or null if unknown). Bank lines dated that day count before the value;
+  // an income you added on Month that day counts after it, unless it was added before you typed.
+  function wFlowIn(key, from, to, opt) {
+    const o = opt || {}; const inR = (d) => d > from && d <= to; let v = 0;
+    const inE = (e) => { if (e.date > from && e.date < to) return true; if (e.date === to && e.date !== from) return !('toT' in o) || (o.toT != null && e.at != null && e.at <= o.toT);
+      if (e.date === from && 'fromT' in o) return o.fromT == null || e.at == null || e.at > o.fromT; return e.date === to && !('toT' in o) && e.date > from; };
+    if (key === 'pea') v -= C.sum(D.txs.filter((t) => t.cat === 'PEA & investments' && inR(t.date)), (t) => +t.amt || 0);
     if (key === 'pee' || key === 'pc') D.txs.filter((t) => t.cat === 'Epsor (PEE / PERCOL)' && t.amt < 0 && inR(t.date)).forEach((t) => { if ((/PERCOL|PER COL/i.test(`${t.desc} ${(t.det || []).join(' ')}`) ? 'pc' : 'pee') === key) v -= t.amt; });
-    Object.values((S.overrides || {}).paidIn || {}).forEach((e) => { if (e.to === key && inR(e.date)) v += +e.amt || 0; });
+    Object.values((S.overrides || {}).paidIn || {}).forEach((e) => { if (e.to === key && inE(e)) v += +e.amt || 0; });
     return C.r2(v);
   }
   // a typed figure carried to a later day: plus what moved in or out of the account since it was typed
   function wCarry(a, v, d, to) {
     const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
-    if (!d || d >= to) return { v, add: 0 };
-    const add = book ? wMoves(a, d, to).v : wFlowIn(a.key, d, to); return { v: C.r2(v + add), add };
+    if (!d || d > to) return { v, add: 0 };
+    const add = book ? wMoves(a, d, to).v : wFlowIn(a.key, d, to, { fromT: ptT(d) }); return { v: C.r2(v + add), add };
   }
   function wSrcAt(a, end, k) {
     const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
     if (book) { const x = wStmtAt(a, end); if (x) return x; if (a.key === 'la') { const v = wLaAt(end); if (v != null) return { v, how: 'Livret A: last known balance plus the transfers since' }; } }
     const pts = (S.snapshots && S.snapshots.points) || {}; const R = C.monthRange(k, S.cfg.cutoff);
-    const d = Object.keys(pts).filter((x) => x > R.from && x <= end && pts[x] && pts[x][a.key] != null).sort().pop();
+    // a market value is typed when you close, a few days after the cycle end: one typed up to a week after the end counts for it, less what was paid in between
+    if (!book && end === R.to) { const late = Object.keys(pts).filter((x) => x > end && x <= C.dayAdd(end, W_LATE) && ptHas(pts[x], a.key)).sort().pop();
+      if (late) { const back = wFlowIn(a.key, end, late, { toT: ptT(late) }); return { v: C.r2(+pts[late][a.key] - back), how: 'value typed ' + fmtDate(late) + (Math.abs(back) >= 0.005 ? `, less ${rcN(back)} paid in after ${fmtDate(end)}` : '') }; } }
+    const d = Object.keys(pts).filter((x) => x > R.from && x <= end && ptHas(pts[x], a.key)).sort().pop();
     if (d) { const cr = wCarry(a, +pts[d][a.key], d, end); return { v: cr.v, how: 'check-in ' + fmtDate(d) + (Math.abs(cr.add) >= 0.005 ? ` + ${rcN(cr.add)} paid in since` : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') }; }
     const au = ((S.snapshots || {}).auto || {})[end]; if (au && au[a.key] != null) return { v: +au[a.key], how: 'balance recorded at the close' };
     if (a.past && k <= a.past.until) return { v: +a.past.bal || 0, how: 'past balance typed on the account' };
@@ -60,9 +67,10 @@
 
   function wNowSrc(a) {
     const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
-    if (!book) { const cr = wCarry(a, +a.balance || 0, a.asOf, D.today); return { v: cr.v, d: a.asOf || null, how: 'value typed' + (a.asOf ? ' ' + fmtDate(a.asOf) : '') + (Math.abs(cr.add) >= 0.005 ? ' + paid in since' : '') }; }
-    // current accounts, Livret A, LDDS: the balance at the last cycle end, plus the lines and the Apple Pay entries since; what you type is only a check
     const pk = C.addMonths(tmThis(), -1); const e0 = C.monthRange(pk, S.cfg.cutoff).to; const s0 = wSrcAt(a, e0, pk);
+    // market-valued accounts during the cycle: the value at the last cycle end plus what was paid in since; no gain until the next cycle-end value
+    if (!book) { if (s0.v == null) return { v: +a.balance || 0, d: a.asOf || null, how: 'value typed' }; const pin = wFlowIn(a.key, e0, D.today); return { v: C.r2(s0.v + pin), d: D.today, how: fmtDate(e0) + ' value' + (Math.abs(pin) >= 0.005 ? ' + paid in since' : '') }; }
+    // current accounts, Livret A, LDDS: the balance at the last cycle end, plus the lines and the Apple Pay entries since; what you type is only a check
     if (s0.v == null) return { v: +a.balance || 0, d: a.asOf || null, how: 'typed (no balance at ' + fmtDate(e0) + ')' };
     const f = wFlowAt(a, e0, s0.v, D.today); return { v: f.v, d: D.today, how: fmtDate(e0) + ' + ' + f.n + ' line' + (f.n === 1 ? '' : 's') + (f.live ? ` + ${f.live} Apple Pay` : '') };
   }
@@ -79,7 +87,7 @@
   // the current cycle's check figures: what you typed for current accounts, Livret A and LDDS; the typed value carried with what was paid in since for the others
   function wTypedBal() {
     const o = {}; WG.forEach(([g]) => { o[g] = null; });
-    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld'; o[g] = (o[g] || 0) + (book ? +a.balance || 0 : wNowSrc(a).v); });
+    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld'; if (!book) return; o[g] = (o[g] || 0) + (+a.balance || 0); });
     o.total = C.sum(WG, ([g]) => o[g] || 0); return o;
   }
 
@@ -90,6 +98,10 @@
       if (v == null) { if (Math.abs(+a.balance || 0) >= 0.5) miss.add(g); return; } o[g] += v; any = true; });
     if (!any) return null; miss.forEach((g) => { o[g] = null; }); o.total = miss.size ? null : C.sum(WG, ([g]) => o[g] || 0); return o;
   }
+  // a balance point counts for an account only if you typed that account that day (older points, without the list, count for every account)
+  const ptHas = (pt, k) => !!pt && pt[k] != null && (!pt._typed || pt._typed.includes(k));
+  const ptT = (d) => { const pt = ((S.snapshots && S.snapshots.points) || {})[d]; return pt && pt._t ? pt._t : null; };
+  const W_LATE = 7; // days after a cycle end during which a typed market value still counts for that cycle
   const W_START = '2026-05'; // Wealth history starts with the May26 cycle
   // ---------- balances by roll-forward ----------
   // Each actual column's balance = the previous column's balance + the moves into each account from the statements (MTD for today), then reconciled to the balances
