@@ -5,9 +5,6 @@
   const WLQ = FC_GRP.map(([k, l]) => [k, l]);
   const wGroupOf = (a) => (a.tier === 'receivable' ? null : a.tier === 'cash' ? 'cash' : WG.some(([k]) => k === a.key) ? a.key : 'dep');
   // balances by group: from a snapshot point, or today's typed balances
-  function wBal(pt) { const o = {}; WG.forEach(([k]) => { o[k] = null; }); let any = false;
-    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; const v = pt ? pt[a.key] : +a.balance || 0; if (v == null) return; o[g] = (o[g] || 0) + +v; any = true; });
-    if (!any) return null; o.total = pt && pt.nw != null ? +pt.nw : C.sum(WG, ([k]) => o[k] || 0); return o; }
   const wStKey = (st) => st.acctKey || ({ REV: 'rev', TR: 'tr' })[st.account] || (String(st.account).startsWith('SG') && st.role !== 'savings' ? 'sg' : null);
   function wLaAt(end) {
     const an = []; Object.values(S.stmts || {}).filter((x) => x.acctKey === 'la').forEach((x) => { if (x.closing != null) an.push([x.to, +x.closing]); (x.checkpoints || []).forEach((c) => an.push([c.date, +c.bal])); });
@@ -42,6 +39,31 @@
     if (first && first.from > end) { const op = first.opening != null ? +first.opening : first.closing != null ? first.closing - C.sum(first.tx || [], (t) => +t.amt || 0) : null; if (op != null && Math.abs(op) < 5) return { v: 0, how: 'not open yet (first file from ' + fmtDate(first.from) + ')' }; }
     return { v: null, how: 'no statement or check-in for ' + fmtDate(end) };
   }
+  // ---------- an account's balance today, moving with the month ----------
+  // For current accounts, Livret A and LDDS: the newer of (a) the last statement balance, carried forward with the account's later lines, and (b) the balance you typed;
+  // then the lines dated after it and the Apple Pay entries not yet on a statement. Market-valued accounts keep the value you typed.
+  const W_LIVE = { SG: 'sg', REV: 'rev', TR: 'tr' };
+  function wStmtLast(a) {
+    const st = Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key && x.closing != null).sort((p, q) => q.to.localeCompare(p.to))[0]; if (!st) return null;
+    const later = wAcctLines(a, st.to, D.today); const d = later.reduce((m, t) => (t.date > m ? t.date : m), st.to);
+    return { v: C.r2(st.closing + C.sum(later, (t) => +t.amt || 0)), d, st };
+  }
+  function wNowSrc(a) {
+    const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
+    if (!book) return { v: +a.balance || 0, d: a.asOf || null, how: 'value typed' + (a.asOf ? ' ' + fmtDate(a.asOf) : '') };
+    const sp = wStmtLast(a); const typed = a.asOf ? { v: +a.balance || 0, d: a.asOf } : null;
+    const base = sp && (!typed || sp.d >= typed.d) ? { v: sp.v, d: sp.d, how: 'statements to ' + fmtDate(sp.d) } : typed ? { v: typed.v, d: typed.d, how: 'typed ' + fmtDate(typed.d) } : sp ? { v: sp.v, d: sp.d, how: 'statements to ' + fmtDate(sp.d) } : { v: +a.balance || 0, d: null, how: 'typed' };
+    if (!base.d) return base;
+    const mv = base.how.startsWith('statements') ? { v: 0, n: 0 } : wMoves(a, base.d, D.today);
+    const live = D.txs.filter((t) => t.live && W_LIVE[t.acct] === a.key && t.date > base.d && t.date <= D.today);
+    const v = C.r2(base.v + mv.v + C.sum(live, (t) => +t.amt || 0)); const extra = (mv.n ? ` + ${mv.n} line${mv.n > 1 ? 's' : ''}` : '') + (live.length ? ` + ${live.length} Apple Pay` : '');
+    return { v, d: base.d, how: base.how + extra };
+  }
+  function wNowBal() {
+    const o = {}; WG.forEach(([g]) => { o[g] = null; });
+    S.cfg.accounts.filter((a) => a.tier !== 'receivable').forEach((a) => { const g = wGroupOf(a); if (!g) return; o[g] = (o[g] || 0) + wNowSrc(a).v; });
+    o.total = C.sum(WG, ([g]) => o[g] || 0); return o;
+  }
   // balances by row at a cycle end; a row (and the total) stays blank when one of its accounts with money in it is unknown
   function wSrcBal(end, k) {
     const o = {}; WG.forEach(([g]) => { o[g] = 0; }); const miss = new Set(); let any = false;
@@ -63,7 +85,7 @@
     const rv = (S.overrides && S.overrides.reviewed) || {}; const lastRv = Object.keys(rv).filter((x) => rv[x]).sort().pop() || '';
     D.keys.filter((k) => k >= W_START && k < th).forEach((k) => { const R = C.monthRange(k, S.cfg.cutoff); const done = D.complete.includes(k);
       cols.push({ key: k, h: otCode(k, 'A'), kind: 'A', s: wSrcBal(R.to, k), col: tmFromStmt(k), raw: M.colFromStatement(stmtOf(k), k, done ? 'A' : 'C', D.txs), toClose: !rv[k] && k > lastRv }); });
-    cols.push({ key: th, h: otCode(th, 'C'), kind: 'C', s: wBal(null), cls: 'tm-now', raw: M.colFromStatement(stmtOf(th), th, 'C', D.txs), est: true });
+    cols.push({ key: th, h: otCode(th, 'C'), kind: 'C', s: wNowBal(), cls: 'tm-now', raw: M.colFromStatement(stmtOf(th), th, 'C', D.txs), est: true });
     cols.forEach((c, i) => { const p = cols[i - 1]; const src = c.s || {}; c.paid = {}; WG.forEach(([k]) => { c.paid[k] = k === 'dep' ? 0 : +(c.raw.assets[k] || 0); });
       c.b = {}; c.roll = {}; c.diff = {}; c.gain = {}; c.open = {}; c.estK = {}; const bk = book[c.key] || {};
       WG.forEach(([k]) => { const sv = src[k] != null ? +src[k] : null;
@@ -112,14 +134,32 @@
       <div class="tm-w"><table class="tm-t ot-t rc2-t"><thead><tr><th class="tm-l">Account</th><th class="num">${esc(fmtDate(e0))}</th><th class="num">Its lines</th><th class="num">Expected ${esc(fmtDate(e1))}</th><th class="num">Statement ${esc(fmtDate(e1))}</th><th class="num">Gap</th></tr></thead>
       <tbody>${rows}</tbody><tfoot><tr class="tot"><th scope="row" class="tm-l">${esc(lab)}</th><td class="num">${rcN(t0)}</td><td class="num">${rcN(C.r2(C.sum(R, (r) => r.mv.v)))}</td><td class="num">${rcN(tot('exp'))}</td><td class="num">${rcN(t1)}</td><td class="num">${rcN(tg)}</td></tr></tfoot></table></div>${why}</div>`;
   }
+  // the current cycle so far: each account that has a statement balance since the last cycle end (a mid-month upload with balances), checked at that file's last date
+  function reconSoFar(c, prevKey) {
+    if (!c || !prevKey) return ''; const e0 = C.monthRange(prevKey, S.cfg.cutoff).to;
+    const R = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && W_BOOK.includes(wGroupOf(a))).map((a) => {
+      const st = Object.values(S.stmts || {}).filter((x) => wStKey(x) === a.key && x.closing != null && x.to > e0 && x.to <= D.today).sort((p, q) => q.to.localeCompare(p.to))[0]; if (!st) return null;
+      const s0 = wSrcAt(a, e0, prevKey), mv = wMoves(a, e0, st.to); const exp = s0.v == null ? null : C.r2(s0.v + mv.v); const gap = exp == null ? null : C.r2(st.closing - exp);
+      return { a, s0, mv, exp, gap, to: st.to, v: +st.closing };
+    }).filter(Boolean);
+    if (!R.length) return '';
+    const bad = R.filter((r) => r.gap != null && Math.abs(r.gap) >= 0.01).length;
+    const rows = R.map((r) => `<tr><th scope="row" class="tm-l">${esc(r.a.name.replace(/\s*••\d+/, ''))}</th><td class="num">${rcN(r.s0.v)}</td><td class="num">${rcN(r.mv.v)}<small class="muted"> ${r.mv.n}</small></td><td class="num">${esc(fmtDate(r.to))}</td><td class="num">${rcN(r.exp)}</td><td class="num">${rcN(r.v)}</td><td class="num ${r.gap != null && Math.abs(r.gap) >= 0.01 ? 'rc-bad-t' : ''}">${r.gap != null && Math.abs(r.gap) < 0.01 ? `<span class="rc-ok">${icon('check', 'sm')}</span>` : rcN(r.gap)}</td></tr>
+      <tr class="rc2-src"><td colspan="7">${esc(fmtDate(e0))}: ${esc(r.s0.how)} · ${r.mv.n} ${esc(r.mv.how)} to ${esc(fmtDate(r.to))}</td></tr>`).join('');
+    return `<div class="rc2"><div class="rc2-h"><div><b>${esc(c.h)} so far</b><div class="muted sm">Files uploaded since ${esc(fmtDate(e0))}, each checked at its last balance${bad ? '' : ': every one ties'}</div></div></div>
+      <div class="tm-w"><table class="tm-t ot-t rc2-t"><thead><tr><th class="tm-l">Account</th><th class="num">${esc(fmtDate(e0))}</th><th class="num">Its lines</th><th class="num">File to</th><th class="num">Expected</th><th class="num">File says</th><th class="num">Gap</th></tr></thead><tbody>${rows}</tbody></table></div>
+      ${bad ? '<p class="sm rc-bad-t">A gap means a line is missing or doubled in that file, or the file\'s balance is wrong. Fix it now; book anything left only once the cycle has ended.</p>' : ''}</div>`;
+  }
   // open differences on current accounts, Livret A and LDDS, for each cycle that has ended (the current cycle is still moving, so it is not checked here)
   function reconCard(cols) {
     const items = []; cols.forEach((c, i) => { if (c.kind !== 'A' || i === 0) return; W_BOOK.forEach((k) => { const o = c.open && c.open[k]; if (o != null && Math.abs(o) >= W_TOL) items.push({ c, k, o, pk: cols[i - 1].key }); }); });
     const booked = (S.overrides && S.overrides.recon) || {}; const nb = Object.values(booked).reduce((n, x) => n + Object.keys(x || {}).length, 0);
     const last = cols.filter((c) => c.kind === 'A').pop();
+    const ci = cols.findIndex((c) => c.kind === 'C'); const soFar = ci > 0 ? reconSoFar(cols[ci], cols[ci - 1].key) : '';
     return `<section class="card" id="w-recon"><div class="card-h"><h2>Reconcile</h2><span class="muted sm">At each cycle end, against the statements</span></div>
-      ${items.length ? items.map(({ c, k, o, pk }) => reconBlock(c, k, pk, o)).join('') + `<p class="muted sm">Each account: its balance at the previous cycle end, plus its own lines, should give the statement balance at this cycle end. A gap on one account means a line is missing or wrong in its file. Book what is left as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain). Today's balances are checked when the cycle ends.</p>`
+      ${items.length ? items.map(({ c, k, o, pk }) => reconBlock(c, k, pk, o)).join('') + `<p class="muted sm">Each account: its balance at the previous cycle end, plus its own lines, should give the statement balance at this cycle end. A gap on one account means a line is missing or wrong in its file. Book what is left as interest or an adjustment; it then rolls into every later balance. Investments reconcile by themselves (the difference is the market gain). Files uploaded during the current cycle are checked below as they come in; booking waits for the cycle end.</p>`
         : `<p class="sm"><span class="rc-ok">${icon('check', 'sm')}</span> Every balance ties to the statements${last ? ` up to ${esc(fmtDate(C.monthRange(last.key, S.cfg.cutoff).to))}` : ''}.</p>`}
+      ${soFar}
       ${nb ? `<p class="sm"><button type="button" class="btn-ghost" data-act="w-unbook">Clear ${nb} booked adjustment${nb > 1 ? 's' : ''}</button></p>` : ''}</section>`;
   }
   document.addEventListener('click', (ev) => { const b = ev.target.closest('[data-act="w-book"],[data-act="w-unbook"]'); if (!b) return; S.overrides.recon = S.overrides.recon || {};
@@ -168,8 +208,8 @@
     const nw = cur.b ? cur.b.total : D.nw; const ch = lastA ? nw - lastA.b.total : null;
     // liquidity
     const lq = WLQ.map(([k, l]) => ({ k, l, v: C.sum(WG.filter((g) => g[2] === k), ([g]) => cur.b[g] || 0) })).filter((x) => Math.abs(x.v) >= 0.5); const lt = C.sum(lq, (x) => Math.max(0, x.v)) || 1;
-    // today, by account: each account with a balance, grouped by how fast it can be reached (same balances as the Nov26C column)
-    const acs = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && wGroupOf(a)).map((a) => ({ n: a.name.replace(/\s*••\d+/, ''), v: +a.balance || 0, q: WG.find((g) => g[0] === wGroupOf(a))[2] })).filter((a) => Math.abs(a.v) >= 0.5);
+    // today, by account: each account with a balance, grouped by how fast it can be reached (same balances as the current-cycle column: statements and Apple Pay since your last check-in)
+    const acs = S.cfg.accounts.filter((a) => a.tier !== 'receivable' && wGroupOf(a)).map((a) => ({ n: a.name.replace(/\s*••\d+/, ''), v: wNowSrc(a).v, q: WG.find((g) => g[0] === wGroupOf(a))[2] })).filter((a) => Math.abs(a.v) >= 0.5);
     const amx = Math.max(1, ...acs.map((a) => a.v)); const pct = (v) => `${Math.round((v / lt) * 100)}%`;
     const lqBar = (v, i) => `<span class="lq-tr"><span class="lq-f lq-c${i}" style="width:${Math.max(0, (v / amx) * 100).toFixed(1)}%"></span></span>`;
     const liq = `<div class="lq-list">${lq.map((x) => { const i = WLQ.findIndex((w) => w[0] === x.k); const mine = acs.filter((a) => a.q === x.k); const one = mine.length === 1 || x.k === 'cur'; const solo = mine.length === 1;

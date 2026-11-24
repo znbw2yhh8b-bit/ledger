@@ -96,7 +96,9 @@ A cycle runs from the 23rd to the 22nd and is named by its end month (Nov26 = 23
 4. **Type your balances** (PEA and the other market values).
 5. **Close Nov26A.** Once a cycle has ended it shows as an actual column on Wealth and Over time; until you close it, its Wealth header says "to close".
 
-The current cycle (Dec26C) is not reconciled: it shows the balances you typed today and is checked once it ends.
+During the cycle, Wealth's current column (Dec26C) and its headline move with the month: for current accounts, Livret A and LDDS each account takes the newer of its last statement balance and the balance you typed, then adds the lines and Apple Pay entries dated after it. Market-valued accounts (PEA, PEE, PERCOL) keep the value you typed.
+
+Mid-cycle uploads are checked as they come in: Reconcile shows "Dec26C so far" for each account whose file carries a balance (the template's `balance` column, Revolut's CSV): its balance at the last cycle end plus its lines must give the file's last balance. A gap there means a line is missing or doubled; booking waits for the cycle end. An SG CSV export has no balance, so fill the template's `balance` column to have SG checked mid-cycle.
 
 The bank-specific readers still work: Trade Republic export (cash and PEA), Revolut consolidated statement, SG CSV, plus a column matcher for anything else.
 
@@ -134,6 +136,11 @@ create policy "own rows" on public.ledger_kv
 The app then saves every change to Supabase and reloads changes from other devices each time you come back to it. If two devices edit the same thing at once, the last save wins.
 
 **Another backend:** write an object with `init`, `get`, `set`, `list` and `remove` in `storage.js`, and pick it in the `Store` line at the bottom. No page needs to change.
+
+## Changes in v11.3
+
+- Wealth today moves with the month: statements and Apple Pay entries after your last check-in update current accounts, Livret A and LDDS, in the current column, the headline and the split.
+- Reconcile checks files uploaded mid-cycle ("Dec26C so far"), each at its own last balance.
 
 ## Changes in v11.2
 
