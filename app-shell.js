@@ -57,6 +57,7 @@
   // ---------- persistence: every read and write goes through Store (storage.js); the pages only see S ----------
   // keys: model, rules, overrides, snapshots, tax, model-backup-2026-11b, stmts/<id>, live/<id> (see README)
   let sync = 'starting'; const dirty = {}, writing = {}, timers = {};
+  const APP_VERSION = '11.7'; // shown under the menu, so you can see which version the iPad runs
   const ONLINE = () => Store.backend !== 'local';
   function saveLocal() { /* each change is written by persist, writeStmt or writeLive */ }
   function setSync(x) { const prev = sync; sync = x; ['sync', 'sync-side'].forEach((id) => { const el = document.getElementById(id); if (el) el.outerHTML = syncPill(id === 'sync-side'); }); if (x !== prev && x === 'error') toast('Last save failed'); }
@@ -64,7 +65,7 @@
     const here = ONLINE() ? ['good', 'cloud', 'Saved to your account'] : ['good', 'device', 'Saved on this iPad'];
     const map = { starting: ['muted', 'device', 'Opening…'], signin: ['warn', 'cloud', 'Sign in to open your data'], saved: here, saving: ['muted', here[1], 'Saving…'], error: ['bad', 'alert', 'Last save failed'] };
     const [k, ic, t] = map[sync] || here;
-    return `<span id="${side ? 'sync-side' : 'sync'}" class="pill pill-${k}${side ? ' side-sync' : ''}" role="status" aria-label="${esc(t)}" title="${esc(t)}">${icon(ic)}<span class="pill-t">${esc(t)}</span></span>`;
+    return `<span id="${side ? 'sync-side' : 'sync'}" class="pill pill-${k}${side ? ' side-sync' : ''}" role="status" aria-label="${esc(t)}" title="${esc(t)}">${icon(ic)}<span class="pill-t">${esc(t)}${side ? ` · v${APP_VERSION}` : ''}</span></span>`;
   }
   const BODY = { model: () => S.cfg, rules: () => S.rules, overrides: () => S.overrides, snapshots: () => S.snapshots, tax: () => S.tax };
   // nothing is written before the saved data has loaded, so an empty start can never overwrite it

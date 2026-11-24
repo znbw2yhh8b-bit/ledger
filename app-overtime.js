@@ -37,7 +37,7 @@
     ks.forEach((k) => { const r = M.colFromStatement(stmtOf(k), k, 'A', D.txs); Object.entries(r.assets).forEach(([x, v]) => { if (x !== 'total') to[x] = (to[x] || 0) + (+v || 0); }); });
     const dir = {}; ks.forEach((k) => { const st = stmtOf(k); const by = st.income.directBy || { pee: st.income.direct || 0 }; Object.entries(by).forEach(([x, v]) => { if (+v) dir[x] = (dir[x] || 0) + +v; }); });
     a.dir = dir; a.to = to; a.to.total = Object.keys(to).filter((x) => x !== 'total').reduce((t, x) => t + to[x], 0); return a; }
-  const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, y, i, cls: 'tm-plan' })); const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th);
+  const fcCols = (f) => { const cs = f.years.map((y, i) => ({ h: y.code, sub: y.sub, y, i, cls: 'tm-plan', e: y.actKeys && y.actKeys.length ? fcYtd(y.actKeys) : null })); const th = tmThis(); const closed = D.complete.filter((k) => k >= MONTH_START && k < th);
     const k1 = otYtd1(closed, th), k2 = otYtd2(closed, th); const a1 = fcYtd(k1), a2 = fcYtd(k2);
     if (a2) cs.unshift({ h: 'YTD2', sub: 'FY' + String(M.fyOf(th)).slice(2) + ', ' + k2.length + ' of 12', a: a2, cls: 'tm-u' });
     if (a1) cs.unshift({ h: 'YTD1', sub: 'Jan' + th.slice(2, 4) + ', ' + k1.length + ' of 12', a: a1, cls: 'tm-u' }); return cs; };
@@ -63,7 +63,7 @@
       ['tot', 'Total wealth', (q) => q.y.bal.total], ['', "Total wealth, today's money", (q) => f.real[q.i]], ['h', 'Simulated markets (PEA)'], ['', 'Wealth low (P10)', (q) => f.low[q.i]], ['', 'Wealth median (P50)', (q) => f.mid[q.i]], ['', 'Wealth high (P90)', (q) => f.high[q.i]], ['h', 'Stress test'], ['', 'Wealth, 2008 replay', (q) => f.stress[q.i]]]);
     const head = `<tr><th scope="col" class="tm-l">EUR</th>${cols.map((q) => `<th scope="col" class="num ${q.cls}">${esc(q.h)}${q.sub ? `<small>${esc(q.sub)}</small>` : ''}</th>`).join('')}</tr>`;
     const body = R.map(([k, l, get, act]) => (k === 'h' ? `<tr class="tm-g"><th scope="rowgroup" class="tm-l">${l}</th><td colspan="${cols.length}"></td></tr>`
-      : `<tr class="${k}"><th scope="row" class="tm-l">${esc(l)}</th>${cols.map((q) => `<td class="num ${q.cls}">${tmNum(q.a ? (act ? act(q.a) : null) : get(q), k === 'tot')}</td>`).join('')}</tr>`)).join('');
+      : `<tr class="${k}"><th scope="row" class="tm-l">${esc(l)}</th>${cols.map((q) => `<td class="num ${q.cls}">${tmNum(q.a ? (act ? act(q.a) : null) : q.e && act && get ? get(q) + (act(q.e) || 0) : get(q), k === 'tot')}</td>`).join('')}</tr>`)).join('');
     return `<div class="tm-w ot-w"><table class="tm-t ot-t"><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
   }
   // ---- charts: plain SVG, direct labels ----
@@ -121,7 +121,7 @@
     const f = fcRun();
     return `<div class="row ot-top">${tabs}</div>
       <section class="card"><div class="card-h"><h2>${ui.otFm === 'left' ? 'Left over' : 'Wealth'}</h2>${otSeg('fm', ui.otFm || 'nw', [['nw', 'Wealth'], ['left', 'Left over']])}</div><div class="chart-w" id="ot-chart"></div></section>
-      <section class="card" id="sec-table"><div class="card-h"><h2>Forecast</h2><span class="muted sm">Fiscal years Nov–Oct, from the Oct${String(fcY1() - 1).slice(2)} close${D.fcMiss && D.fcMiss.length ? ' (today used for ' + esc(D.fcMiss.join(', ')) + ')' : ''}${f.frac < 1 && f.frac > 0.005 ? `; ${esc(f.years[0].code)} is the rest of FY${String(f.years[0].y).slice(2)}` : ''}; P10–P90 from ${f.N.toLocaleString('en')} simulated markets</span></div>${fcTable(f)}</section>`;
+      <section class="card" id="sec-table"><div class="card-h"><h2>Forecast</h2><span class="muted sm">Fiscal years Nov–Oct, from the ${esc(M.colCode(f.startKey, 'A'))} close${D.fcMiss && D.fcMiss.length ? ' (today used for ' + esc(D.fcMiss.join(', ')) + ')' : ''}${f.frac < 1 && f.frac > 0.005 ? `; ${esc(f.years[0].code)} is the full year: ${esc(f.years[0].sub)} (closed cycles as actuals, the rest as plan)` : ''}; P10–P90 from ${f.N.toLocaleString('en')} simulated markets</span></div>${fcTable(f)}</section>`;
   }
   after.time = () => {
     const el = document.getElementById('ot-chart'); const tab = ui.otTab === 'fc' ? 'fc' : 'act';

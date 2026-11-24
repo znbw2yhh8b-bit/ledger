@@ -9,7 +9,7 @@
   function asHead(title, note) { return `<div class="card-h"><h2>${esc(title)}</h2>${note ? `<span class="muted sm">${esc(note)}</span>` : ''}</div>`; }
 
   // a year picker: this year to the end of the forecast
-  const asYearSel = (attr, val) => { const y1 = fcY1(); const ys = []; for (let y = y1 - 1; y <= y1 + M.FC_YEARS - 1; y++) ys.push(y); if (val && !ys.includes(+val)) ys.unshift(+val);
+  const asYearSel = (attr, val) => { const y1 = fcYStart(); const ys = []; for (let y = y1 - 1; y <= y1 + M.FC_YEARS - 1; y++) ys.push(y); if (val && !ys.includes(+val)) ys.unshift(+val);
     return `<select class="sel as-sel" ${attr} aria-label="Starting year">${ys.map((y) => `<option value="${y}"${+val === y ? ' selected' : ''}>FY${String(y).slice(2)}</option>`).join('')}</select>`; };
   // income: lines of a yearly amount, a starting year and a growth rate after it; optional straight into an account
   function asIncome(A) {
@@ -40,7 +40,7 @@
   // savings order: rules applied to what is left each year, top first. Each rule: type, account, amount, from and until years.
   const AS_RULES = [['keep', 'Keep in current accounts up to', 'eur'], ['fixed', 'Fixed a month', 'eur'], ['year', 'Fixed a year', 'eur'], ['cap', 'Fill to its ceiling', ''], ['target', 'Fill up to a balance', 'eur'], ['share', 'Share of what is left', 'pct'], ['rest', 'The rest', ''], ['out', 'Take out', 'eur']];
   const asRuleOf = (k) => AS_RULES.find((x) => x[0] === k) || AS_RULES[6];
-  const asUntilSel = (attr, val) => { const y1 = fcY1(); const ys = []; for (let y = y1; y <= y1 + M.FC_YEARS - 1; y++) ys.push(y);
+  const asUntilSel = (attr, val) => { const y1 = fcYStart(); const ys = []; for (let y = y1; y <= y1 + M.FC_YEARS - 1; y++) ys.push(y);
     return `<select class="sel as-sel" ${attr} aria-label="Until year"><option value="">No end</option>${ys.map((y) => `<option value="${y}"${val && +String(val).slice(0, 4) === y ? ' selected' : ''}>FY${String(y).slice(2)}</option>`).join('')}</select>`; };
   function asOrder(A) {
     const ACC = S.cfg.accounts.filter((a) => M.ACCT_ROWS.includes(a.key) && a.key !== 'cash'); const n = A.order.length; const id = (r) => esc(r.id);
@@ -50,7 +50,7 @@
       <select class="sel as-sel" data-aso="${id(r)}" data-f="rule" aria-label="Rule">${AS_RULES.map(([v, l]) => `<option value="${v}"${k === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
       ${k === 'keep' ? '<span class="as-acc muted sm">Current accounts</span>' : `<select class="sel as-sel as-acc" data-aso="${id(r)}" data-f="acct" aria-label="Account">${ACC.map((a) => `<option value="${a.key}"${r.acct === a.key ? ' selected' : ''}>${esc(a.name.replace(/\s*••\d+/, ''))}</option>`).join('')}</select>`}
       ${u ? `<input class="inp num as-in typed" inputmode="decimal" data-aso="${id(r)}" data-f="amount" value="${val}" aria-label="${u === 'pct' ? 'Share %' : 'Amount'}"><span class="muted sm as-u">${u === 'pct' ? '%' : k === 'fixed' ? 'a month' : k === 'keep' || k === 'target' ? 'balance' : 'a year'}</span>` : '<span class="as-in"></span><span class="as-u"></span>'}
-      <div class="as-o2"><span class="muted sm">From</span>${asYearSel(`data-aso="${id(r)}" data-f="from"`, fy || fcY1())}<span class="muted sm">until</span>${asUntilSel(`data-aso="${id(r)}" data-f="to"`, r.to)}<span class="grow"></span>
+      <div class="as-o2"><span class="muted sm">From</span>${asYearSel(`data-aso="${id(r)}" data-f="from"`, fy || fcYStart())}<span class="muted sm">until</span>${asUntilSel(`data-aso="${id(r)}" data-f="to"`, r.to)}<span class="grow"></span>
       <button type="button" class="btn-x" data-as-up="${i}" aria-label="Move up"${i === 0 ? ' disabled' : ''}><span class="flip">${icon('chevD', 'sm')}</span></button><button type="button" class="btn-x" data-as-dn="${i}" aria-label="Move down"${i === n - 1 ? ' disabled' : ''}>${icon('chevD', 'sm')}</button><button type="button" class="btn-x" data-as-delo="${id(r)}" aria-label="Remove rule">${icon('x', 'sm')}</button></div></li>`; }).join('');
     // first forecast year: what each rule placed, and any fixed amount that did not fit
     const f = fcRun(); const y = f.years[0]; const nm = (r) => { const [k, l] = asRuleOf(r.rule); return k === 'keep' ? l : l + ', ' + (S.cfg.accounts.find((a) => a.key === r.acct) || { name: r.acct || '' }).name.replace(/\s*••\d+/, ''); };
@@ -96,7 +96,7 @@
       if (f === 'on') r.on = x.checked;
       else if (f === 'rule') { r.rule = x.value; if (r.rule !== 'keep' && !r.acct) r.acct = 'pea'; if (r.rule === 'share' && !(r.amount > 0 && r.amount <= 1)) r.amount = 0.5; else if (r.rule !== 'share' && r.amount != null && r.amount <= 1) r.amount = 0; delete r.name; }
       else if (f === 'acct') { r.acct = x.value; delete r.name; }
-      else if (f === 'from') { if (+x.value <= fcY1()) delete r.from; else r.from = String(+x.value); }
+      else if (f === 'from') { if (+x.value <= fcYStart()) delete r.from; else r.from = String(+x.value); }
       else if (f === 'to') { if (x.value) r.to = String(+x.value); else delete r.to; }
       else { let v = asNum(x.value); if (v != null && r.rule === 'share') v = Math.min(100, Math.max(0, v)) / 100; r.amount = v || 0; }
       asSave(); }
@@ -107,8 +107,8 @@
     if (d.asDelc) { const undo = snap('model'); A.costL = A.costL.filter((o) => o.id !== d.asDelc); persist('model'); D.fc = null; changed(); toast('Line removed', undo); return; }
     if (d.asDelo) { const undo = snap('model'); A.order = A.order.filter((o) => o.id !== d.asDelo); persist('model'); D.fc = null; changed(); toast('Rule removed', undo); return; }
     if ('asAddo' in d) A.order.push({ id: 'o' + Date.now().toString(36), rule: 'fixed', acct: 'pea', amount: 0, on: true });
-    else if ('asAddc' in d) A.costL.push({ id: 'c' + Date.now().toString(36), bucket: 'lifestyle', amount: 0, from: fcY1(), growth: 0.02 });
-    else if ('asAdd' in d) A.inc.push({ id: 'i' + Date.now().toString(36), name: 'New income', amount: 0, from: fcY1(), growth: 0, acct: null });
+    else if ('asAddc' in d) A.costL.push({ id: 'c' + Date.now().toString(36), bucket: 'lifestyle', amount: 0, from: fcYStart(), growth: 0.02 });
+    else if ('asAdd' in d) A.inc.push({ id: 'i' + Date.now().toString(36), name: 'New income', amount: 0, from: fcYStart(), growth: 0, acct: null });
     else if (d.asUp != null || d.asDn != null) { const i = +(d.asUp != null ? d.asUp : d.asDn); const j = d.asUp != null ? i - 1 : i + 1; if (j < 0 || j >= A.order.length) return; const t = A.order[i]; A.order[i] = A.order[j]; A.order[j] = t; }
     else return; asSave();
   });

@@ -142,6 +142,12 @@ The app then saves every change to Supabase and reloads changes from other devic
 
 **Another backend:** write an object with `init`, `get`, `set`, `list` and `remove` in `storage.js`, and pick it in the `Store` line at the bottom. No page needs to change.
 
+## Changes in v11.7
+
+- The forecast starts from the latest closed cycle (closed on Update), with Wealth's balances at its end. The rest of that fiscal year is the first column, FY27E ("1A + 11F"): each line's year total less what the closed cycles already show (a bonus half or participation already paid is not planned again), so the year adds up to the assumption. Then five full fiscal years. From an October close it is five full years, as before.
+- Assumption years (from / until) start at the part year when there is one.
+- The version shows under the menu ("Saved on this iPad · v11.7").
+
 ## Changes in v11.6
 
 - A payment into the PEA, PEE or PERCOL added on Month (or a PEA line) shows on Wealth at once: during the cycle these accounts are last cycle-end value + paid in, with no gain until you type the next value.

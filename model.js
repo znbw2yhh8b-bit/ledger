@@ -290,8 +290,10 @@
     for (let i = 0; i < P.length; i++) {
       const { y, f, ly } = P[i]; const start = { ...b }; const into = zeroA(); const put = (k, v) => { if (!(k in into)) k = 'cash'; b[k] += v; into[k] += v; if (k in dep) dep[k] += v; };
       const items = {}; let inT = 0; const direct = zeroA();
-      (inp.inc || []).forEach((l) => { const v = lineAt(l, ly) * f; if (!v) return; const nm = (l.name || '').trim() || 'Income'; items[nm] = (items[nm] || 0) + v; inT += v; if (l.acct && l.acct !== 'cash' && ACCT_ROWS.includes(l.acct)) direct[l.acct] += v; });
-      const cost = zeroCost(); (inp.costs || []).forEach((l) => { if (l.bucket in cost) cost[l.bucket] += lineAt(l, ly) * f; }); const costT = sumO(cost); const left = inT - costT;
+      // the rest of a year already partly closed: a line or bucket given in inp.rest takes that amount (its year total less what the closed cycles already show) instead of a share of the year
+      const R0 = i === 0 && f < 1 && inp.rest ? inp.rest : null;
+      (inp.inc || []).forEach((l) => { const v = R0 && R0.inc && l.id in R0.inc ? R0.inc[l.id] : lineAt(l, ly) * f; if (!v) return; const nm = (l.name || '').trim() || 'Income'; items[nm] = (items[nm] || 0) + v; inT += v; if (l.acct && l.acct !== 'cash' && ACCT_ROWS.includes(l.acct)) direct[l.acct] += v; });
+      const cost = zeroCost(); (inp.costs || []).forEach((l) => { if (l.bucket in cost && !(R0 && R0.cost && l.bucket in R0.cost)) cost[l.bucket] += lineAt(l, ly) * f; }); if (R0 && R0.cost) Object.keys(R0.cost).forEach((k) => { if (k in cost) cost[k] += R0.cost[k]; }); const costT = sumO(cost); const left = inT - costT;
       let avail = left; ACCT_ROWS.forEach((k) => { if (direct[k]) { put(k, direct[k]); avail -= direct[k]; } });
       const byRule = {}; let short = 0;
       for (const r of order) {
