@@ -26,12 +26,26 @@
     const later = wAcctLines(a, st.to, end);
     return { v: C.r2(st.closing + C.sum(later, (t) => +t.amt || 0)), how: `statement to ${fmtDate(st.to)}${later.length ? `, plus ${later.length} later line${later.length > 1 ? 's' : ''}` : ''}`, st: true };
   }
+  // money paid into a market-valued account between two days: transfers into the PEA from the statements, Epsor payments, and the income you added on Month straight to an account (participation, abondement)
+  function wFlowIn(key, from, to) {
+    const inR = (d) => d > from && d <= to; let v = 0;
+    if (key === 'pea') v -= C.sum(D.txs.filter((t) => t.cat === 'PEA & investments' && !t.live && inR(t.date)), (t) => +t.amt || 0);
+    if (key === 'pee' || key === 'pc') D.txs.filter((t) => t.cat === 'Epsor (PEE / PERCOL)' && t.amt < 0 && inR(t.date)).forEach((t) => { if ((/PERCOL|PER COL/i.test(`${t.desc} ${(t.det || []).join(' ')}`) ? 'pc' : 'pee') === key) v -= t.amt; });
+    Object.values((S.overrides || {}).paidIn || {}).forEach((e) => { if (e.to === key && inR(e.date)) v += +e.amt || 0; });
+    return C.r2(v);
+  }
+  // a typed figure carried to a later day: plus what moved in or out of the account since it was typed
+  function wCarry(a, v, d, to) {
+    const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
+    if (!d || d >= to) return { v, add: 0 };
+    const add = book ? wMoves(a, d, to).v : wFlowIn(a.key, d, to); return { v: C.r2(v + add), add };
+  }
   function wSrcAt(a, end, k) {
     const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
     if (book) { const x = wStmtAt(a, end); if (x) return x; if (a.key === 'la') { const v = wLaAt(end); if (v != null) return { v, how: 'Livret A: last known balance plus the transfers since' }; } }
     const pts = (S.snapshots && S.snapshots.points) || {}; const R = C.monthRange(k, S.cfg.cutoff);
     const d = Object.keys(pts).filter((x) => x > R.from && x <= end && pts[x] && pts[x][a.key] != null).sort().pop();
-    if (d) return { v: +pts[d][a.key], how: 'check-in ' + fmtDate(d) + (d !== end ? ' (before the cycle end)' : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') };
+    if (d) { const cr = wCarry(a, +pts[d][a.key], d, end); return { v: cr.v, how: 'check-in ' + fmtDate(d) + (Math.abs(cr.add) >= 0.005 ? ` + ${rcN(cr.add)} paid in since` : '') + (isUsd(a) ? ', USD at that day\'s typed rate' : '') }; }
     const au = ((S.snapshots || {}).auto || {})[end]; if (au && au[a.key] != null) return { v: +au[a.key], how: 'balance recorded at the close' };
     if (a.past && k <= a.past.until) return { v: +a.past.bal || 0, how: 'past balance typed on the account' };
     // an account whose first file starts after the day, opening at about zero: it was not open yet
@@ -50,7 +64,7 @@
   }
   function wNowSrc(a) {
     const book = a.tier === 'cash' || a.key === 'la' || a.key === 'ld';
-    if (!book) return { v: +a.balance || 0, d: a.asOf || null, how: 'value typed' + (a.asOf ? ' ' + fmtDate(a.asOf) : '') };
+    if (!book) { const cr = wCarry(a, +a.balance || 0, a.asOf, D.today); return { v: cr.v, d: a.asOf || null, how: 'value typed' + (a.asOf ? ' ' + fmtDate(a.asOf) : '') + (Math.abs(cr.add) >= 0.005 ? ' + paid in since' : '') }; }
     const sp = wStmtLast(a); const typed = a.asOf ? { v: +a.balance || 0, d: a.asOf } : null;
     const base = sp && (!typed || sp.d >= typed.d) ? { v: sp.v, d: sp.d, how: 'statements to ' + fmtDate(sp.d) } : typed ? { v: typed.v, d: typed.d, how: 'typed ' + fmtDate(typed.d) } : sp ? { v: sp.v, d: sp.d, how: 'statements to ' + fmtDate(sp.d) } : { v: +a.balance || 0, d: null, how: 'typed' };
     if (!base.d) return base;
